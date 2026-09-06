@@ -13,6 +13,7 @@ import {
   Scissors
 } from 'lucide-react';
 import { Salon, Service } from '../types';
+import { salonDataService } from '../lib/salonDataService';
 
 interface UpiPaymentVerificationModalProps {
   salon: Salon;
@@ -43,6 +44,7 @@ export const UpiPaymentVerificationModal: React.FC<UpiPaymentVerificationModalPr
   const upiId = salon.upi_id || 'westernboys@okhdfcbank';
   const [copied, setCopied] = useState(false);
   const [screenshotPreview, setScreenshotPreview] = useState<string | null>(null);
+  const [fileToUpload, setFileToUpload] = useState<File | Blob | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
@@ -61,12 +63,18 @@ export const UpiPaymentVerificationModal: React.FC<UpiPaymentVerificationModalPr
       return;
     }
 
-    const reader = new FileReader();
-    reader.onload = () => {
-      setScreenshotPreview(reader.result as string);
+    setFileToUpload(file);
+    try {
+      setScreenshotPreview(URL.createObjectURL(file));
       setErrorMsg(null);
-    };
-    reader.readAsDataURL(file);
+    } catch {
+      const reader = new FileReader();
+      reader.onload = () => {
+        setScreenshotPreview(reader.result as string);
+        setErrorMsg(null);
+      };
+      reader.readAsDataURL(file);
+    }
   };
 
   // Demo receipt generator for instant seamless testing
@@ -92,22 +100,51 @@ export const UpiPaymentVerificationModal: React.FC<UpiPaymentVerificationModalPr
       ctx.font = '11px monospace';
       ctx.fillText(new Date().toLocaleString(), 24, 255);
     }
-    setScreenshotPreview(canvas.toDataURL('image/png'));
-    setErrorMsg(null);
+    
+    canvas.toBlob((blob) => {
+      if (blob) {
+        setFileToUpload(blob);
+        setScreenshotPreview(URL.createObjectURL(blob));
+      } else {
+        const dataUrl = canvas.toDataURL('image/png');
+        setScreenshotPreview(dataUrl);
+      }
+      setErrorMsg(null);
+    }, 'image/png');
   };
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!screenshotPreview) {
+    if (!screenshotPreview && !fileToUpload) {
       setErrorMsg('Please upload your payment screenshot as proof of transaction.');
       return;
     }
 
     setIsSubmitting(true);
-    onSuccess({
-      gateway: 'upi',
-      paymentScreenshotUrl: screenshotPreview
-    });
+    setErrorMsg(null);
+
+    try {
+      let finalPath = screenshotPreview || '';
+      if (fileToUpload) {
+        const res = await salonDataService.uploadPaymentReceipt(fileToUpload, salon.id);
+        if (res.success && res.path) {
+          finalPath = res.path;
+        }
+      }
+
+      onSuccess({
+        gateway: 'upi',
+        paymentScreenshotUrl: finalPath
+      });
+    } catch (err: any) {
+      console.error('Error uploading payment receipt:', err);
+      onSuccess({
+        gateway: 'upi',
+        paymentScreenshotUrl: screenshotPreview || ''
+      });
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
   const upiDeepLink = `upi://pay?pa=${encodeURIComponent(upiId)}&pn=${encodeURIComponent(salon.name)}&am=${amount}&cu=INR`;

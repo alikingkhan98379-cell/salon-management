@@ -1103,6 +1103,81 @@ class SalonDataService {
     );
   }
 
+  // Upload payment screenshot to private Supabase Storage bucket 'payment-receipts'
+  public async uploadPaymentReceipt(
+    fileOrBlob: File | Blob,
+    salonId: string,
+    fileName = 'receipt.png'
+  ): Promise<{ success: boolean; path?: string; error?: string }> {
+    if (!supabase) {
+      return new Promise((resolve) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve({ success: true, path: reader.result as string });
+        reader.onerror = () => resolve({ success: false, error: 'Could not read file.' });
+        reader.readAsDataURL(fileOrBlob);
+      });
+    }
+
+    try {
+      const ext = (fileOrBlob as File).name?.split('.').pop() || 'png';
+      const cleanExt = ext.toLowerCase().replace(/[^a-z0-9]/g, '');
+      const uniquePath = `${salonId}/${Date.now()}_${Math.random().toString(36).substring(2, 8)}.${cleanExt || 'png'}`;
+
+      const { data, error } = await supabase.storage
+        .from('payment-receipts')
+        .upload(uniquePath, fileOrBlob, {
+          cacheControl: '3600',
+          upsert: false,
+          contentType: (fileOrBlob as File).type || 'image/png'
+        });
+
+      if (error) {
+        console.warn('Supabase storage upload failed, falling back to base64 Data URL:', error.message);
+        return new Promise((resolve) => {
+          const reader = new FileReader();
+          reader.onload = () => resolve({ success: true, path: reader.result as string });
+          reader.onerror = () => resolve({ success: false, error: error.message });
+          reader.readAsDataURL(fileOrBlob);
+        });
+      }
+
+      return { success: true, path: data.path };
+    } catch (err: any) {
+      console.warn('Storage upload exception, falling back:', err);
+      return new Promise((resolve) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve({ success: true, path: reader.result as string });
+        reader.onerror = () => resolve({ success: false, error: err.message });
+        reader.readAsDataURL(fileOrBlob);
+      });
+    }
+  }
+
+  // Generate short-lived signed URL for a receipt storage path
+  public async getReceiptSignedUrl(pathOrUrl?: string, expiresInSeconds = 300): Promise<string | null> {
+    if (!pathOrUrl) return null;
+    if (pathOrUrl.startsWith('data:') || pathOrUrl.startsWith('http://') || pathOrUrl.startsWith('https://')) {
+      return pathOrUrl;
+    }
+
+    if (!supabase) return null;
+
+    try {
+      const { data, error } = await supabase.storage
+        .from('payment-receipts')
+        .createSignedUrl(pathOrUrl, expiresInSeconds);
+
+      if (error || !data?.signedUrl) {
+        console.warn('Could not generate signed URL for receipt:', error?.message);
+        return null;
+      }
+      return data.signedUrl;
+    } catch (err) {
+      console.warn('Signed URL exception:', err);
+      return null;
+    }
+  }
+
   // Haversine Distance Calculation (km)
   public calculateDistanceKm(lat1: number, lon1: number, lat2: number, lon2: number): number {
     const R = 6371; // Earth radius in km

@@ -20,11 +20,12 @@ import { RegisterSalonScreen } from './components/RegisterSalonScreen';
 import { SubscriptionExpiredGate } from './components/SubscriptionExpiredGate';
 import { PaymentVerificationManager } from './components/PaymentVerificationManager';
 import { ManageStaffScreen } from './components/ManageStaffScreen';
+import { InactivityModal } from './components/InactivityModal';
 import { salonDataService, REGISTERED_SALONS } from './lib/salonDataService';
 import { salonStore } from './lib/mockStore';
 import { supabase } from './lib/supabaseClient';
 import { UserRole, Salon } from './types';
-import { Scissors, ShieldCheck, Wifi, AlertTriangle } from 'lucide-react';
+import { Scissors, ShieldCheck, Wifi, AlertTriangle, Clock, X } from 'lucide-react';
 
 interface AuthUser {
   id: string;
@@ -323,7 +324,7 @@ export function App() {
     setActiveTab('dashboard');
   };
 
-  const handleLogout = async () => {
+  const handleLogout = async (reason?: string) => {
     lastAuthUserIdRef.current = null;
     setIsPartnerAuthOpen(false);
     if (currentUser?.email) {
@@ -339,6 +340,9 @@ export function App() {
     setUserSalons([]);
     setIsPickerActive(false);
     setActiveTab('dashboard');
+    if (reason === 'inactivity') {
+      setInactivityNotice('You were signed out due to 30 minutes of inactivity to protect your account.');
+    }
   };
 
   const handleNavigateToTrack = (tokenCode: string) => {
@@ -347,9 +351,89 @@ export function App() {
   };
 
   // ---------------------------------------------------------------------------
+  // Session Inactivity Timeout (30-min Auto-Logout with 60s Warning for Operational Roles)
+  // ---------------------------------------------------------------------------
+  const INACTIVITY_TIMEOUT_SECONDS = 1800; // 30 minutes
+  const WARNING_THRESHOLD_SECONDS = 60;   // 60 seconds warning
+
+  const [inactivitySecondsLeft, setInactivitySecondsLeft] = useState<number>(INACTIVITY_TIMEOUT_SECONDS);
+  const [showInactivityWarning, setShowInactivityWarning] = useState<boolean>(false);
+  const [inactivityNotice, setInactivityNotice] = useState<string | null>(null);
+
+  const lastActivityTimeRef = useRef<number>(Date.now());
+  const showWarningRef = useRef<boolean>(false);
+  showWarningRef.current = showInactivityWarning;
+
+  const handleStayLoggedIn = () => {
+    lastActivityTimeRef.current = Date.now();
+    setInactivitySecondsLeft(INACTIVITY_TIMEOUT_SECONDS);
+    setShowInactivityWarning(false);
+  };
+
+  const handleInactivityLogout = async () => {
+    setShowInactivityWarning(false);
+    await handleLogout('inactivity');
+  };
+
+  useEffect(() => {
+    // Only operational roles (salon_owner, manager, staff, super_admin) have session inactivity timeouts
+    const isOperationalRole = currentUser && ['salon_owner', 'manager', 'staff', 'super_admin'].includes(currentUser.role);
+    if (!isOperationalRole) {
+      setShowInactivityWarning(false);
+      return;
+    }
+
+    // Reset activity timer upon role load or user change
+    lastActivityTimeRef.current = Date.now();
+    setInactivitySecondsLeft(INACTIVITY_TIMEOUT_SECONDS);
+    setShowInactivityWarning(false);
+
+    const resetActivity = () => {
+      // While warning modal is shown, explicit action (Stay Logged In) is required to dismiss warning
+      if (!showWarningRef.current) {
+        lastActivityTimeRef.current = Date.now();
+      }
+    };
+
+    const interval = setInterval(() => {
+      const elapsedSeconds = Math.floor((Date.now() - lastActivityTimeRef.current) / 1000);
+      const remaining = Math.max(0, INACTIVITY_TIMEOUT_SECONDS - elapsedSeconds);
+      setInactivitySecondsLeft(remaining);
+
+      if (remaining <= 0) {
+        clearInterval(interval);
+        handleInactivityLogout();
+      } else if (remaining <= WARNING_THRESHOLD_SECONDS) {
+        setShowInactivityWarning(true);
+      } else {
+        setShowInactivityWarning(false);
+      }
+    }, 1000);
+
+    const events = ['mousemove', 'mousedown', 'keydown', 'touchstart', 'scroll'];
+    events.forEach(event => window.addEventListener(event, resetActivity, { passive: true }));
+
+    return () => {
+      clearInterval(interval);
+      events.forEach(event => window.removeEventListener(event, resetActivity));
+    };
+  }, [currentUser?.role, currentUser?.id]);
+
+  // Auto-dismiss inactivity notice after 10 seconds
+  useEffect(() => {
+    if (inactivityNotice) {
+      const timer = setTimeout(() => {
+        setInactivityNotice(null);
+      }, 10000);
+      return () => clearTimeout(timer);
+    }
+  }, [inactivityNotice]);
+
+  // ---------------------------------------------------------------------------
   // 1. ANONYMOUS GUEST & CUSTOMER ROUTE: Open Browsing (Zero Login Required)
   // ---------------------------------------------------------------------------
-  if (!currentUser) {
+  const renderAppContent = () => {
+    if (!currentUser) {
     if (isPartnerAuthOpen) {
       return (
         <AuthScreen
@@ -589,6 +673,42 @@ export function App() {
       </footer>
 
     </div>
+    );
+  };
+
+  return (
+    <>
+      {inactivityNotice && (
+        <div className="fixed top-4 left-1/2 -translate-x-1/2 z-[150] max-w-md w-full px-4 animate-fadeIn font-sans">
+          <div className="bg-amber-500 text-slate-950 font-bold p-4 rounded-2xl shadow-2xl flex items-center justify-between gap-3 border border-amber-400">
+            <div className="flex items-center gap-2.5 text-xs">
+              <Clock className="w-5 h-5 shrink-0" />
+              <span>{inactivityNotice}</span>
+            </div>
+            <button
+              type="button"
+              onClick={() => setInactivityNotice(null)}
+              className="text-slate-950 hover:bg-amber-600/30 p-1.5 rounded-lg transition"
+            >
+              <X className="w-4 h-4" />
+            </button>
+          </div>
+        </div>
+      )}
+
+      {showInactivityWarning && (
+        <InactivityModal
+          secondsRemaining={inactivitySecondsLeft}
+          onStayLoggedIn={handleStayLoggedIn}
+          onLogout={() => {
+            setShowInactivityWarning(false);
+            handleLogout();
+          }}
+        />
+      )}
+
+      {renderAppContent()}
+    </>
   );
 }
 export default App;

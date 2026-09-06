@@ -30,6 +30,7 @@ export const PaymentVerificationManager: React.FC<PaymentVerificationManagerProp
 }) => {
   const [appointments, setAppointments] = useState<Appointment[]>([]);
   const [selectedScreenshot, setSelectedScreenshot] = useState<string | null>(null);
+  const [resolvedUrls, setResolvedUrls] = useState<Record<string, string>>({});
   const [rejectionTargetId, setRejectionTargetId] = useState<string | null>(null);
   const [rejectionReason, setRejectionReason] = useState<string>('');
   const [isProcessing, setIsProcessing] = useState<boolean>(false);
@@ -45,6 +46,29 @@ export const PaymentVerificationManager: React.FC<PaymentVerificationManagerProp
     const unsub = salonDataService.subscribe(loadPending);
     return () => unsub();
   }, [salonId]);
+
+  // Resolve private storage paths to signed URLs
+  useEffect(() => {
+    let isCancelled = false;
+    const resolveAll = async () => {
+      const updates: Record<string, string> = {};
+      for (const appt of appointments) {
+        if (appt.payment_screenshot_url && !resolvedUrls[appt.id]) {
+          const signed = await salonDataService.getReceiptSignedUrl(appt.payment_screenshot_url, 600);
+          if (signed) {
+            updates[appt.id] = signed;
+          }
+        }
+      }
+      if (!isCancelled && Object.keys(updates).length > 0) {
+        setResolvedUrls(prev => ({ ...prev, ...updates }));
+      }
+    };
+    resolveAll();
+    return () => {
+      isCancelled = true;
+    };
+  }, [appointments]);
 
   const handleConfirm = async (appointmentId: string) => {
     setIsProcessing(true);
@@ -179,23 +203,26 @@ export const PaymentVerificationManager: React.FC<PaymentVerificationManagerProp
               <div className="flex items-center gap-4 self-end md:self-center shrink-0">
                 
                 {/* Screenshot Preview */}
-                {appt.payment_screenshot_url ? (
-                  <button
-                    type="button"
-                    onClick={() => setSelectedScreenshot(appt.payment_screenshot_url || null)}
-                    className="relative group rounded-xl overflow-hidden border border-slate-700 w-16 h-16 bg-slate-950 shrink-0"
-                    title="Click to view payment proof"
-                  >
-                    <img
-                      src={appt.payment_screenshot_url}
-                      alt="Payment Proof"
-                      className="w-full h-full object-cover group-hover:scale-105 transition-transform"
-                    />
-                    <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 flex items-center justify-center text-white transition-opacity">
-                      <Eye className="w-4 h-4" />
-                    </div>
-                  </button>
-                ) : (
+                {appt.payment_screenshot_url ? (() => {
+                  const imageUrl = resolvedUrls[appt.id] || appt.payment_screenshot_url;
+                  return (
+                    <button
+                      type="button"
+                      onClick={() => setSelectedScreenshot(imageUrl || null)}
+                      className="relative group rounded-xl overflow-hidden border border-slate-700 w-16 h-16 bg-slate-950 shrink-0"
+                      title="Click to view payment proof"
+                    >
+                      <img
+                        src={imageUrl}
+                        alt="Payment Proof"
+                        className="w-full h-full object-cover group-hover:scale-105 transition-transform"
+                      />
+                      <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 flex items-center justify-center text-white transition-opacity">
+                        <Eye className="w-4 h-4" />
+                      </div>
+                    </button>
+                  );
+                })() : (
                   <div className="w-16 h-16 rounded-xl bg-slate-950 border border-slate-800 flex flex-col items-center justify-center text-slate-500 text-[9px] text-center p-1">
                     <QrCode className="w-4 h-4 mb-0.5 text-amber-400" />
                     <span>UPI Direct</span>
