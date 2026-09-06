@@ -47,7 +47,7 @@ class StoreBridge {
   }
 
   public getAllSalons(): Salon[] {
-    return salonDataService.getAllSalons();
+    return salonDataService.getAllSalonsSync();
   }
 
   public setActiveSalon(salonId: string) {

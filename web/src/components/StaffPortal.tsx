@@ -9,14 +9,23 @@ import {
   Scissors, 
   AlertCircle,
   Star,
-  Lock
+  Lock,
+  Edit3,
+  Save,
+  MessageSquare
 } from 'lucide-react';
 import { salonStore } from '../lib/mockStore';
+import { salonDataService } from '../lib/salonDataService';
 import { Appointment } from '../types';
 
 export const StaffPortal: React.FC = () => {
   const staffMembers = salonStore.getStaff();
   const [selectedStaffId, setSelectedStaffId] = useState<string>(staffMembers[0]?.id || '');
+  
+  // Note editing state for completed visits
+  const [editingApptId, setEditingApptId] = useState<string | null>(null);
+  const [hairNote, setHairNote] = useState('');
+  const [behaviorNote, setBehaviorNote] = useState('');
 
   const appointments = salonStore.getAppointments();
   const currentStaff = staffMembers.find(s => s.id === selectedStaffId) || staffMembers[0];
@@ -26,7 +35,6 @@ export const StaffPortal: React.FC = () => {
 
   const handleStartService = (appt: Appointment) => {
     appt.status = 'serving';
-    // Update token
     const tok = salonStore.getTokens().find(t => t.appointment_id === appt.id);
     if (tok) {
       tok.status = 'serving';
@@ -43,6 +51,21 @@ export const StaffPortal: React.FC = () => {
     } else {
       salonStore.createInvoiceForAppointment(appt.id);
     }
+    // Prompt for stylist notes
+    setEditingApptId(appt.id);
+  };
+
+  const handleSaveNotes = (appt: Appointment) => {
+    if (appt.customer_id) {
+      salonDataService.updateCustomerStylistNotes(appt.customer_id, {
+        hairPreference: hairNote,
+        behavior: behaviorNote
+      });
+    }
+    setEditingApptId(null);
+    setHairNote('');
+    setBehaviorNote('');
+    alert('Customer styling & behavioral notes saved to client profile!');
   };
 
   const handleNoShow = (appt: Appointment) => {
@@ -115,6 +138,7 @@ export const StaffPortal: React.FC = () => {
             const isServing = appt.status === 'serving';
             const isCompleted = appt.status === 'completed';
             const isConfirmed = appt.status === 'confirmed' || appt.status === 'pending';
+            const isEditingNotes = editingApptId === appt.id;
 
             return (
               <div
@@ -123,7 +147,7 @@ export const StaffPortal: React.FC = () => {
                   isServing
                     ? 'border-amber-500/60 bg-amber-950/20 shadow-amber-500/10'
                     : isCompleted
-                    ? 'border-slate-800/60 opacity-60'
+                    ? 'border-slate-800/60'
                     : 'border-slate-800 hover:border-slate-700'
                 }`}
               >
@@ -152,7 +176,6 @@ export const StaffPortal: React.FC = () => {
 
                       <p className="text-xs text-slate-300 font-medium mt-0.5">{appt.service_name}</p>
 
-                      {/* Client Hair Preferences / Allergy Notes */}
                       {appt.home_service_address && (
                         <p className="text-[11px] text-purple-300 mt-1 bg-purple-950/30 px-2 py-1 rounded border border-purple-800/40">
                           📍 Address: {appt.home_service_address}
@@ -190,9 +213,19 @@ export const StaffPortal: React.FC = () => {
                     )}
 
                     {isCompleted && (
-                      <span className="text-xs text-emerald-400 flex items-center gap-1 font-semibold">
-                        <CheckCircle2 className="w-4 h-4" /> Completed
-                      </span>
+                      <div className="flex items-center gap-2">
+                        <span className="text-xs text-emerald-400 flex items-center gap-1 font-semibold">
+                          <CheckCircle2 className="w-4 h-4" /> Completed
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() => setEditingApptId(isEditingNotes ? null : appt.id)}
+                          className="px-2.5 py-1 bg-slate-800 hover:bg-slate-700 text-amber-400 text-[11px] font-semibold rounded-lg flex items-center gap-1"
+                        >
+                          <Edit3 className="w-3 h-3" />
+                          <span>Stylist Notes</span>
+                        </button>
+                      </div>
                     )}
 
                     {!isCompleted && (
@@ -207,6 +240,57 @@ export const StaffPortal: React.FC = () => {
                   </div>
 
                 </div>
+
+                {/* Stylist Notes Drawer for Customer */}
+                {isEditingNotes && (
+                  <div className="mt-4 pt-3 border-t border-slate-800 space-y-3 bg-slate-950/60 p-3 rounded-xl">
+                    <div className="flex items-center gap-1.5 text-xs font-bold text-amber-400">
+                      <MessageSquare className="w-3.5 h-3.5" />
+                      Record Styling Notes for {appt.customer_name} (Recognized Across All Salons)
+                    </div>
+
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                      <div>
+                        <label className="block text-[10px] text-slate-400 mb-1">Look / Hair &amp; Beard Preference</label>
+                        <input
+                          type="text"
+                          placeholder="e.g. Skin taper fade #1 on sides, scissor trimmed top"
+                          value={hairNote}
+                          onChange={(e) => setHairNote(e.target.value)}
+                          className="w-full bg-slate-900 border border-slate-700 rounded-lg px-2.5 py-1.5 text-xs text-white"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-[10px] text-slate-400 mb-1">Behavior &amp; Service Quirks</label>
+                        <input
+                          type="text"
+                          placeholder="e.g. Sensitive scalp, quiet client, likes herbal aftershave"
+                          value={behaviorNote}
+                          onChange={(e) => setBehaviorNote(e.target.value)}
+                          className="w-full bg-slate-900 border border-slate-700 rounded-lg px-2.5 py-1.5 text-xs text-white"
+                        />
+                      </div>
+                    </div>
+
+                    <div className="flex justify-end gap-2 pt-1">
+                      <button
+                        type="button"
+                        onClick={() => setEditingApptId(null)}
+                        className="px-3 py-1 text-xs text-slate-400 hover:text-white"
+                      >
+                        Cancel
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => handleSaveNotes(appt)}
+                        className="px-3 py-1 bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold text-xs rounded-lg flex items-center gap-1"
+                      >
+                        <Save className="w-3 h-3" />
+                        <span>Save to Client Profile</span>
+                      </button>
+                    </div>
+                  </div>
+                )}
               </div>
             );
           })
@@ -216,3 +300,4 @@ export const StaffPortal: React.FC = () => {
     </div>
   );
 };
+export default StaffPortal;

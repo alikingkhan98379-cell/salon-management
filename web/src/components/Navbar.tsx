@@ -15,7 +15,8 @@ import {
   Bell,
   Clock,
   LogOut,
-  User
+  User,
+  ShoppingBag
 } from 'lucide-react';
 import { UserRole, Salon } from '../types';
 
@@ -197,6 +198,19 @@ export const Navbar: React.FC<NavbarProps> = ({
           >
             <Bell className="w-3.5 h-3.5" />
             <span>Check My Token</span>
+          </button>
+
+          {/* Customer Marketplace View */}
+          <button
+            onClick={() => onTabChange('marketplace')}
+            className={`flex items-center space-x-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all whitespace-nowrap ${
+              activeTab === 'marketplace'
+                ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 shadow-sm font-bold'
+                : 'text-emerald-400 hover:text-emerald-300 hover:bg-emerald-950/30'
+            }`}
+          >
+            <ShoppingBag className="w-3.5 h-3.5" />
+            <span>Customer Marketplace</span>
           </button>
 
           {/* WhatsApp Bot Simulator */}

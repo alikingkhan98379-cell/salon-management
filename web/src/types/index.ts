@@ -76,6 +76,7 @@ export interface Customer {
   address?: string;
   allergy_notes?: string;
   hair_preference_notes?: string;
+  behavior_notes?: string;
   preferred_staff_id?: string;
   total_visits: number;
   total_spent: number;
@@ -83,9 +84,28 @@ export interface Customer {
   created_at: string;
 }
 
+export interface CustomerVisitRecord {
+  appointmentId: string;
+  salonId: string;
+  salonName: string;
+  serviceName: string;
+  staffName?: string;
+  appointmentDate: string;
+  timeSlot: string;
+  amount: number;
+  status: AppointmentStatus;
+  notes?: string;
+  stylistNotes?: {
+    hairPreference?: string;
+    allergy?: string;
+    behavior?: string;
+  };
+}
+
 export interface Appointment {
   id: string;
   salon_id: string;
+  salon_name?: string;
   customer_id: string;
   customer_name?: string;
   customer_phone?: string;
