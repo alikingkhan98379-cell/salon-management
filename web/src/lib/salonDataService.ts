@@ -441,8 +441,54 @@ class SalonDataService {
           });
         }
       }
+      // Proactively sync any local salons to Supabase in the background
+      this.syncLocalSalonsToSupabase().catch(() => {});
     } catch (e) {
       console.warn('Could not load custom salons from localStorage:', e);
+    }
+  }
+
+  public async syncLocalSalonsToSupabase(): Promise<void> {
+    if (!supabase) return;
+    try {
+      if (typeof window === 'undefined' || !window.localStorage) return;
+      const saved = localStorage.getItem('wbs_custom_salons');
+      if (!saved) return;
+      const parsed: Salon[] = JSON.parse(saved);
+      if (!Array.isArray(parsed) || parsed.length === 0) return;
+
+      const { data: remoteSalons } = await supabase.from('salons').select('id');
+      const remoteIds = new Set((remoteSalons || []).map((s: any) => s.id));
+
+      for (const salon of parsed) {
+        if (!remoteIds.has(salon.id)) {
+          const baseInsertData = {
+            id: salon.id,
+            name: salon.name,
+            slug: salon.slug || `salon-${Date.now()}`,
+            phone: salon.phone || '+91 9999999999',
+            email: salon.email || salon.owner_email || '',
+            address: salon.address + (salon.pincode && !salon.address.includes(salon.pincode) ? ` - ${salon.pincode}` : ''),
+            city: salon.city || 'Jaipur',
+            state: salon.state || 'Rajasthan',
+            currency: salon.currency || 'INR',
+            currency_symbol: salon.currency_symbol || '₹',
+            subscription_plan: salon.subscription_plan || 'base_monthly',
+            billing_cycle: salon.billing_cycle || 'monthly',
+            subscription_status: salon.subscription_status || 'trial',
+            subscription_expires_at: salon.subscription_expires_at || salon.trial_ends_at || new Date(Date.now() + 7 * 86400000).toISOString()
+          };
+          const { error } = await supabase.from('salons').insert(baseInsertData);
+          if (!error) {
+            remoteIds.add(salon.id);
+            console.log('Synced local salon to Supabase:', salon.name, salon.id);
+          } else {
+            console.warn('Supabase sync error for salon:', salon.id, error);
+          }
+        }
+      }
+    } catch (err) {
+      console.warn('Error syncing local salons to Supabase:', err);
     }
   }
 
@@ -673,15 +719,30 @@ class SalonDataService {
   public async getAllSalonsForAdmin(): Promise<Salon[]> {
     if (supabase) {
       try {
+        await this.syncLocalSalonsToSupabase();
         const { data, error } = await supabase
           .from('salons')
           .select('*')
           .order('created_at', { ascending: false });
+
         if (!error && data && data.length > 0) {
+          const enriched: Salon[] = data.map((remote: any) => {
+            const local = this.allSalonsCache.find(x => x.id === remote.id);
+            return {
+              ...remote,
+              pincode: local?.pincode || remote.pincode || '',
+              upi_id: local?.upi_id || remote.upi_id || 'westernboys@upi',
+              owner_name: local?.owner_name || remote.owner_name || (remote.email ? remote.email.split('@')[0] : 'Registered Owner'),
+              owner_email: local?.owner_email || remote.owner_email || remote.email || '',
+              trial_ends_at: remote.trial_ends_at || local?.trial_ends_at || remote.subscription_expires_at,
+              subscription_expires_at: remote.subscription_expires_at || local?.subscription_expires_at
+            };
+          });
+
           // Merge remote with local in-memory cache so no newly registered salon is missed
           const map = new Map<string, Salon>();
           this.allSalonsCache.forEach(s => map.set(s.id, s));
-          data.forEach((s: Salon) => map.set(s.id, s));
+          enriched.forEach(s => map.set(s.id, s));
           const merged = Array.from(map.values()).sort((a, b) => 
             new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
           );
@@ -786,25 +847,24 @@ class SalonDataService {
           effectiveOwnerId = generateUUID();
         }
 
-        const { error: salonErr } = await supabase.from('salons').insert({
+        const baseInsertData = {
           id: newSalon.id,
           name: newSalon.name,
           slug: newSalon.slug,
           phone: newSalon.phone,
           email: newSalon.email,
-          address: newSalon.address,
+          address: newSalon.address + (newSalon.pincode && !newSalon.address.includes(newSalon.pincode) ? ` - ${newSalon.pincode}` : ''),
           city: newSalon.city,
           state: newSalon.state,
-          pincode: newSalon.pincode,
-          latitude: newSalon.latitude,
-          longitude: newSalon.longitude,
-          upi_id: newSalon.upi_id,
-          subscription_plan: newSalon.subscription_plan,
-          billing_cycle: newSalon.billing_cycle,
-          subscription_status: newSalon.subscription_status,
-          trial_ends_at: newSalon.trial_ends_at,
-          subscription_expires_at: newSalon.subscription_expires_at
-        });
+          currency: newSalon.currency || 'INR',
+          currency_symbol: newSalon.currency_symbol || '₹',
+          subscription_plan: newSalon.subscription_plan || 'base_monthly',
+          billing_cycle: newSalon.billing_cycle || 'monthly',
+          subscription_status: newSalon.subscription_status || 'trial',
+          subscription_expires_at: newSalon.subscription_expires_at || newSalon.trial_ends_at
+        };
+
+        const { error: salonErr } = await supabase.from('salons').insert(baseInsertData);
 
         if (salonErr) {
           console.error('Supabase salons insert error:', salonErr);

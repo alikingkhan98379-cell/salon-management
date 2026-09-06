@@ -169,7 +169,6 @@ export const SuperAdminConsole: React.FC<SuperAdminConsoleProps> = ({
       try {
         await supabase.from('salons').update({
           subscription_status: 'trial',
-          trial_ends_at: newExpiry,
           subscription_expires_at: newExpiry
         }).eq('id', salon.id);
       } catch (err) {
@@ -254,7 +253,9 @@ export const SuperAdminConsole: React.FC<SuperAdminConsoleProps> = ({
     s.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
     s.city.toLowerCase().includes(searchQuery.toLowerCase()) ||
     s.state.toLowerCase().includes(searchQuery.toLowerCase()) ||
-    (s.owner_name && s.owner_name.toLowerCase().includes(searchQuery.toLowerCase()))
+    (s.email && s.email.toLowerCase().includes(searchQuery.toLowerCase())) ||
+    (s.owner_name && s.owner_name.toLowerCase().includes(searchQuery.toLowerCase())) ||
+    (s.owner_email && s.owner_email.toLowerCase().includes(searchQuery.toLowerCase()))
   );
 
   // City-wise aggregation
@@ -418,13 +419,13 @@ export const SuperAdminConsole: React.FC<SuperAdminConsoleProps> = ({
                         {/* Owner Info */}
                         <td className="p-4">
                           <div className="font-semibold text-slate-200">
-                            {salon.owner_name || 'Registered Owner'}
+                            {salon.owner_name || (salon.email ? salon.email.split('@')[0] : 'Registered Owner')}
                           </div>
                           <div className="text-[11px] text-slate-400 font-mono">
                             {salon.phone}
                           </div>
-                          {salon.owner_email && (
-                            <div className="text-[10px] text-slate-500">{salon.owner_email}</div>
+                          {(salon.owner_email || salon.email) && (
+                            <div className="text-[10px] text-slate-500">{salon.owner_email || salon.email}</div>
                           )}
                         </td>
 
@@ -453,7 +454,7 @@ export const SuperAdminConsole: React.FC<SuperAdminConsoleProps> = ({
                             <div>
                               <div>{new Date(salon.subscription_expires_at).toLocaleDateString()}</div>
                               <div className="text-[10px] text-slate-500">
-                                {isExpired ? 'Expired' : 'Active'}
+                                {isExpired ? 'Expired' : isTrial ? 'Trial Active' : 'Active'}
                               </div>
                             </div>
                           ) : (
@@ -621,6 +622,17 @@ export const SuperAdminConsole: React.FC<SuperAdminConsoleProps> = ({
 
             <div className="grid grid-cols-2 gap-3 text-xs">
               <div className="p-3 rounded-xl bg-slate-950 border border-slate-800">
+                <span className="text-slate-500 text-[10px] uppercase block">Owner Contact</span>
+                <span className="text-white font-semibold">
+                  {inspectingSalon.owner_name || (inspectingSalon.email ? inspectingSalon.email.split('@')[0] : 'Registered Owner')}
+                </span>
+                <div className="text-slate-400 mt-0.5 font-mono">{inspectingSalon.phone}</div>
+                {(inspectingSalon.owner_email || inspectingSalon.email) && (
+                  <div className="text-[10px] text-slate-500">{inspectingSalon.owner_email || inspectingSalon.email}</div>
+                )}
+              </div>
+
+              <div className="p-3 rounded-xl bg-slate-950 border border-slate-800">
                 <span className="text-slate-500 text-[10px] uppercase block">Location</span>
                 <span className="text-white font-semibold">{inspectingSalon.address}</span>
                 <div className="text-slate-400 mt-0.5">{inspectingSalon.city}, {inspectingSalon.state} {inspectingSalon.pincode}</div>
@@ -637,7 +649,7 @@ export const SuperAdminConsole: React.FC<SuperAdminConsoleProps> = ({
                 <span className="text-amber-300 font-mono">{inspectingSalon.upi_id || 'Not configured'}</span>
               </div>
 
-              <div className="p-3 rounded-xl bg-slate-950 border border-slate-800">
+              <div className="p-3 rounded-xl bg-slate-950 border border-slate-800 col-span-2">
                 <span className="text-slate-500 text-[10px] uppercase block">GPS Coordinates</span>
                 <span className="text-slate-300 font-mono">
                   {inspectingSalon.latitude ? `${inspectingSalon.latitude.toFixed(4)}, ${inspectingSalon.longitude?.toFixed(4)}` : 'N/A'}
