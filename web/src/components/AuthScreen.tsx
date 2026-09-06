@@ -12,10 +12,13 @@ import {
   Users,
   UserCheck,
   ShoppingBag,
-  Sparkles
+  Sparkles,
+  Clock,
+  X
 } from 'lucide-react';
 import { supabase } from '../lib/supabaseClient';
 import { UserRole } from '../types';
+import { TokenTracker } from './TokenTracker';
 
 interface AuthScreenProps {
   onTestLogin: (testUser: {
@@ -32,6 +35,7 @@ interface AuthScreenProps {
 export const AuthScreen: React.FC<AuthScreenProps> = ({ onTestLogin }) => {
   // Two required login options: Email OTP and Google OAuth
   const [authMethod, setAuthMethod] = useState<'email' | 'google' | 'customer'>('email');
+  const [showGuestTracker, setShowGuestTracker] = useState(false);
   
   // Email Form State
   const [email, setEmail] = useState('');
@@ -550,8 +554,35 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onTestLogin }) => {
 
       </div>
 
+      {/* Direct Live Queue Token Tracker for Clients */}
+      <div className="max-w-md w-full mt-4 relative z-10">
+        <button
+          type="button"
+          onClick={() => setShowGuestTracker(true)}
+          className="w-full py-3 px-4 rounded-2xl bg-gradient-to-r from-slate-900 via-[#131b2e] to-slate-900 border border-amber-500/40 hover:border-amber-400 hover:bg-slate-800 transition-all flex items-center justify-between group shadow-xl"
+        >
+          <div className="flex items-center gap-3">
+            <div className="p-2.5 rounded-xl bg-amber-500/15 text-amber-400 border border-amber-500/30 group-hover:scale-105 transition-transform">
+              <Clock className="w-5 h-5" />
+            </div>
+            <div className="text-left">
+              <div className="text-xs font-bold text-white flex items-center gap-2">
+                <span>Track Live Queue Token</span>
+                <span className="text-[10px] text-emerald-400 font-bold bg-emerald-500/10 px-2 py-0.5 rounded-full border border-emerald-500/20">
+                  No Login Required
+                </span>
+              </div>
+              <div className="text-[11px] text-slate-400 mt-0.5">
+                Check wait time, live chair status &amp; queue position
+              </div>
+            </div>
+          </div>
+          <ArrowRight className="w-4 h-4 text-amber-400 group-hover:translate-x-1 transition-transform shrink-0" />
+        </button>
+      </div>
+
       {/* Role QA Quick Switcher: For instant evaluation of all 4 roles + Customer */}
-      <div className="max-w-md w-full mt-6 bg-slate-950/60 border border-slate-800/80 rounded-2xl p-4 relative z-10">
+      <div className="max-w-md w-full mt-5 bg-slate-950/60 border border-slate-800/80 rounded-2xl p-4 relative z-10">
         <div className="flex items-center justify-between mb-2.5">
           <span className="text-[11px] font-bold uppercase tracking-wider text-slate-400 flex items-center gap-1.5">
             <Sparkles className="w-3.5 h-3.5 text-amber-400" />
@@ -687,6 +718,26 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onTestLogin }) => {
 
         </div>
       </div>
+
+      {/* Guest Live Queue Token Tracker Modal */}
+      {showGuestTracker && (
+        <div className="fixed inset-0 z-50 bg-black/85 backdrop-blur-md flex items-center justify-center p-4 overflow-y-auto animate-fadeIn">
+          <div className="max-w-2xl w-full my-8 relative">
+            <button
+              type="button"
+              onClick={() => setShowGuestTracker(false)}
+              className="absolute -top-3 -right-3 z-20 p-2 rounded-full bg-slate-800 text-slate-300 hover:text-white hover:bg-slate-700 border border-slate-700 shadow-xl"
+              title="Close Tracker"
+            >
+              <X className="w-4 h-4" />
+            </button>
+            <TokenTracker
+              initialTokenCode="WBS-01"
+              onBookAnother={() => setShowGuestTracker(false)}
+            />
+          </div>
+        </div>
+      )}
 
     </div>
   );

@@ -599,6 +599,120 @@ class SalonDataService {
     }
   }
 
+  // Global cross-salon & live token search
+  public async findTokenGlobal(searchTerm: string): Promise<{
+    token: Token;
+    salon: Salon;
+    positionInQueue: number;
+    currentlyServing?: Token;
+    appointment?: Appointment;
+    queueAheadCount: number;
+  } | null> {
+    const rawTerm = searchTerm.trim();
+    if (!rawTerm) return null;
+
+    const cleanTerm = rawTerm.toLowerCase().replace(/[^a-z0-9]/g, '');
+    const digitsOnly = rawTerm.replace(/\D/g, '');
+
+    // 1. Search in-memory across all tenant stores
+    for (const [salonId, store] of this.tenantData.entries()) {
+      const salon = this.allSalonsCache.find(s => s.id === salonId) || REGISTERED_SALONS[0];
+      const waiting = store.tokens.filter(t => t.status === 'waiting');
+      const currentlyServing = store.tokens.find(t => t.status === 'serving');
+
+      const matchedToken = store.tokens.find(t => {
+        const codeClean = t.token_code.toLowerCase().replace(/[^a-z0-9]/g, '');
+        if (codeClean === cleanTerm) return true;
+        if (t.token_code.toLowerCase() === rawTerm.toLowerCase()) return true;
+        if (String(t.token_number) === cleanTerm) return true;
+        if (t.token_code.toLowerCase().endsWith(cleanTerm)) return true;
+
+        // Customer name match
+        if (t.customer_name.toLowerCase().includes(rawTerm.toLowerCase())) return true;
+
+        // Customer phone match via appointments
+        if (digitsOnly.length >= 4) {
+          const appt = store.appointments.find(a => a.id === t.appointment_id);
+          const apptPhone = (appt?.customer_phone || '').replace(/\D/g, '');
+          if (apptPhone && apptPhone.endsWith(digitsOnly.slice(-10))) return true;
+        }
+
+        return false;
+      });
+
+      if (matchedToken) {
+        const position = matchedToken.status === 'waiting'
+          ? waiting.findIndex(w => w.id === matchedToken.id) + 1
+          : 0;
+        const appt = store.appointments.find(a => a.id === matchedToken.appointment_id);
+
+        return {
+          token: matchedToken,
+          salon,
+          positionInQueue: position,
+          currentlyServing,
+          appointment: appt,
+          queueAheadCount: Math.max(0, position - 1)
+        };
+      }
+    }
+
+    // 2. Also search Supabase if live
+    if (supabase) {
+      try {
+        const { data } = await supabase
+          .from('tokens')
+          .select('*, appointments(*), salons(*)')
+          .or(`token_code.ilike.%${cleanTerm}%,token_code.ilike.%${rawTerm}%`)
+          .limit(1);
+
+        if (data && data.length > 0) {
+          const row = data[0];
+          const salon = row.salons || this.allSalonsCache[0];
+          const token: Token = {
+            id: row.id,
+            salon_id: row.salon_id,
+            appointment_id: row.appointment_id,
+            token_number: row.token_number,
+            token_code: row.token_code,
+            customer_name: row.appointments?.customer_name || 'Valued Client',
+            service_name: row.appointments?.service_name || 'Hair Service',
+            staff_name: row.appointments?.staff_name || 'Stylist',
+            service_type: row.appointments?.service_type || 'in_salon',
+            queue_date: row.queue_date,
+            status: row.status,
+            estimated_wait_minutes: row.estimated_wait_minutes || 15,
+            created_at: row.created_at
+          };
+
+          return {
+            token,
+            salon,
+            positionInQueue: token.status === 'waiting' ? 1 : 0,
+            appointment: row.appointments,
+            queueAheadCount: 0
+          };
+        }
+      } catch (err) {
+        console.warn('Supabase findTokenGlobal fallback:', err);
+      }
+    }
+
+    return null;
+  }
+
+  // Get all active tokens across all salons
+  public getAllActiveTokens(): { token: Token; salon: Salon }[] {
+    const list: { token: Token; salon: Salon }[] = [];
+    this.tenantData.forEach((store, salonId) => {
+      const salon = this.allSalonsCache.find(s => s.id === salonId) || REGISTERED_SALONS[0];
+      store.tokens.forEach(token => {
+        list.push({ token, salon });
+      });
+    });
+    return list;
+  }
+
   public addService(service: any) {
     const store = this.getStore();
     const newService: Service = {

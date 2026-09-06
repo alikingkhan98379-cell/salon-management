@@ -26,6 +26,7 @@ import {
 import { salonDataService, REGISTERED_SALONS } from '../lib/salonDataService';
 import { Salon, Service, Profile, CustomerVisitRecord, ServiceLocation } from '../types';
 import { MockRazorpayModal } from './MockRazorpayModal';
+import { TokenTracker } from './TokenTracker';
 
 interface CustomerMarketplaceProps {
   customer: {
@@ -34,19 +35,36 @@ interface CustomerMarketplaceProps {
     email: string;
     phone?: string;
   };
+  initialTab?: 'marketplace' | 'history' | 'track';
+  initialTokenCode?: string;
   onNavigateToTrack: (tokenCode: string) => void;
   onLogout: () => void;
 }
 
 export const CustomerMarketplace: React.FC<CustomerMarketplaceProps> = ({
   customer,
+  initialTab,
+  initialTokenCode,
   onNavigateToTrack,
   onLogout
 }) => {
   const [salons, setSalons] = useState<Salon[]>(REGISTERED_SALONS);
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedCity, setSelectedCity] = useState<string>('All');
-  const [activeTab, setActiveTab] = useState<'marketplace' | 'history'>('marketplace');
+  const [activeTab, setActiveTab] = useState<'marketplace' | 'history' | 'track'>(initialTab || 'marketplace');
+  const [trackingTokenCode, setTrackingTokenCode] = useState<string>(initialTokenCode || 'WBS-01');
+
+  useEffect(() => {
+    if (initialTab) {
+      setActiveTab(initialTab);
+    }
+  }, [initialTab]);
+
+  useEffect(() => {
+    if (initialTokenCode) {
+      setTrackingTokenCode(initialTokenCode);
+    }
+  }, [initialTokenCode]);
 
   // Selected Salon Modal / Detail
   const [selectedSalon, setSelectedSalon] = useState<Salon | null>(null);
@@ -212,7 +230,7 @@ export const CustomerMarketplace: React.FC<CustomerMarketplaceProps> = ({
         </div>
       </div>
 
-      {/* Tabs: Marketplace vs Visit History */}
+      {/* Tabs: Marketplace vs Live Queue Tracker vs Visit History */}
       <div className="flex items-center gap-2 border-b border-slate-800 pb-2">
         <button
           type="button"
@@ -232,7 +250,26 @@ export const CustomerMarketplace: React.FC<CustomerMarketplaceProps> = ({
 
         <button
           type="button"
-          onClick={() => setActiveTab('history')}
+          onClick={() => {
+            setActiveTab('track');
+            setSelectedSalon(null);
+          }}
+          className={`px-4 py-2 rounded-xl text-xs font-bold transition-all flex items-center gap-2 ${
+            activeTab === 'track'
+              ? 'bg-amber-500 text-slate-950 shadow-md shadow-amber-500/20'
+              : 'text-slate-400 hover:text-white bg-slate-900/50'
+          }`}
+        >
+          <Clock className="w-4 h-4" />
+          <span>Track Live Token</span>
+        </button>
+
+        <button
+          type="button"
+          onClick={() => {
+            setActiveTab('history');
+            setSelectedSalon(null);
+          }}
           className={`px-4 py-2 rounded-xl text-xs font-bold transition-all flex items-center gap-2 ${
             activeTab === 'history'
               ? 'bg-amber-500 text-slate-950 shadow-md shadow-amber-500/20'
@@ -789,6 +826,21 @@ export const CustomerMarketplace: React.FC<CustomerMarketplaceProps> = ({
         </div>
       )}
 
+      {/* ========================================================================= */}
+      {/* TAB 3: LIVE QUEUE TOKEN TRACKER                                            */}
+      {/* ========================================================================= */}
+      {activeTab === 'track' && (
+        <div className="py-2">
+          <TokenTracker
+            initialTokenCode={trackingTokenCode}
+            onBookAnother={() => {
+              setActiveTab('marketplace');
+              setSelectedSalon(null);
+            }}
+          />
+        </div>
+      )}
+
       {/* Payment Gateway Modal (Mock Razorpay) */}
       {isPaymentModalOpen && selectedService && selectedSalon && (
         <MockRazorpayModal
@@ -831,6 +883,9 @@ export const CustomerMarketplace: React.FC<CustomerMarketplaceProps> = ({
                 onClick={() => {
                   const code = confirmedToken.tokenCode;
                   setConfirmedToken(null);
+                  setTrackingTokenCode(code);
+                  setActiveTab('track');
+                  setSelectedSalon(null);
                   onNavigateToTrack(code);
                 }}
                 className="w-full py-2.5 bg-gradient-to-r from-amber-500 to-amber-600 text-slate-950 font-bold rounded-xl text-xs flex items-center justify-center gap-2"

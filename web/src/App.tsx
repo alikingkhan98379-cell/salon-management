@@ -220,6 +220,8 @@ export function App() {
               email: currentUser.email,
               phone: currentUser.phone
             }}
+            initialTab={activeTab === 'track' ? 'track' : 'marketplace'}
+            initialTokenCode={trackingTokenCode}
             onNavigateToTrack={handleNavigateToTrack}
             onLogout={handleLogout}
           />
