@@ -15,6 +15,22 @@ import {
   AdminAuditLog
 } from '../types';
 
+export function generateUUID(): string {
+  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+    return crypto.randomUUID();
+  }
+  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function(c) {
+    const r = Math.random() * 16 | 0;
+    const v = c === 'x' ? r : (r & 0x3 | 0x8);
+    return v.toString(16);
+  });
+}
+
+export function isValidUUID(id?: string): boolean {
+  if (!id) return false;
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(id);
+}
+
 // Registered default salons for seed/fallback
 export const REGISTERED_SALONS: Salon[] = [
   {
@@ -434,6 +450,9 @@ class SalonDataService {
   }
 
   public setActiveSalonId(id: string) {
+    if (this.activeSalonId === id && this.tenantData.has(id)) {
+      return;
+    }
     this.activeSalonId = id;
     if (!this.tenantData.has(id)) {
       // create empty store if new
@@ -482,28 +501,42 @@ class SalonDataService {
     if (supabase) {
       try {
         if (user.role === 'super_admin') {
-          const { data } = await supabase.from('salons').select('*');
+          const { data } = await supabase
+            .from('salons')
+            .select('*')
+            .order('created_at', { ascending: false });
           if (data && data.length > 0) {
             this.allSalonsCache = data;
             return data;
           }
         } else if (user.role === 'salon_owner') {
-          const { data } = await supabase
-            .from('salon_owners')
-            .select('salon_id, salons(*)')
-            .eq('user_id', user.id);
-          if (data && data.length > 0) {
-            const mapped = data.map((item: any) => item.salons).filter(Boolean);
-            if (mapped.length > 0) return mapped;
+          if (isValidUUID(user.id)) {
+            const { data } = await supabase
+              .from('salon_owners')
+              .select('salon_id, salons(*)')
+              .eq('user_id', user.id);
+            if (data && data.length > 0) {
+              const mapped = data.map((item: any) => item.salons).filter(Boolean);
+              if (mapped.length > 0) {
+                mapped.forEach((s: Salon) => {
+                  if (!this.allSalonsCache.some(existing => existing.id === s.id)) {
+                    this.allSalonsCache.unshift(s);
+                  }
+                });
+                return mapped;
+              }
+            }
           }
         } else if (user.role === 'manager' || user.role === 'staff') {
-          const { data } = await supabase
-            .from('profiles')
-            .select('salon_id, salons(*)')
-            .eq('auth_user_id', user.id)
-            .single();
-          if (data && data.salons) {
-            return [data.salons as unknown as Salon];
+          if (isValidUUID(user.id)) {
+            const { data } = await supabase
+              .from('profiles')
+              .select('salon_id, salons(*)')
+              .eq('auth_user_id', user.id)
+              .single();
+            if (data && data.salons) {
+              return [data.salons as unknown as Salon];
+            }
           }
         }
       } catch (err) {
@@ -523,6 +556,34 @@ class SalonDataService {
       return this.getSalonsByIds([user.assignedSalonId]);
     }
     return []; // Never leak any salon to an unknown user!
+  }
+
+  // Super Admin: Get all registered salons (trial, active, past_due, expired)
+  public async getAllSalonsForAdmin(): Promise<Salon[]> {
+    if (supabase) {
+      try {
+        const { data, error } = await supabase
+          .from('salons')
+          .select('*')
+          .order('created_at', { ascending: false });
+        if (!error && data && data.length > 0) {
+          // Merge remote with local in-memory cache so no newly registered salon is missed
+          const map = new Map<string, Salon>();
+          this.allSalonsCache.forEach(s => map.set(s.id, s));
+          data.forEach((s: Salon) => map.set(s.id, s));
+          const merged = Array.from(map.values()).sort((a, b) => 
+            new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
+          );
+          this.allSalonsCache = merged;
+          return merged;
+        }
+      } catch (err) {
+        console.warn('Supabase getAllSalonsForAdmin error:', err);
+      }
+    }
+    return [...this.allSalonsCache].sort((a, b) => 
+      new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
+    );
   }
 
   // Marketplace: Get all active salons for customers (excludes expired salons)
@@ -569,7 +630,7 @@ class SalonDataService {
       home_service_price: number;
     }>;
   }): Promise<Salon> {
-    const salonId = `salon-${Date.now()}`;
+    const salonId = generateUUID();
     const slug = data.name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '') || `salon-${Date.now()}`;
     const now = new Date();
     const trialEnds = new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000).toISOString();
@@ -601,7 +662,20 @@ class SalonDataService {
 
     if (supabase) {
       try {
-        await supabase.from('salons').insert({
+        let effectiveOwnerId = data.ownerId;
+        if (!isValidUUID(effectiveOwnerId)) {
+          try {
+            const { data: authData } = await supabase.auth.getUser();
+            if (authData?.user?.id && isValidUUID(authData.user.id)) {
+              effectiveOwnerId = authData.user.id;
+            }
+          } catch {}
+        }
+        if (!isValidUUID(effectiveOwnerId)) {
+          effectiveOwnerId = generateUUID();
+        }
+
+        const { error: salonErr } = await supabase.from('salons').insert({
           id: newSalon.id,
           name: newSalon.name,
           slug: newSalon.slug,
@@ -621,19 +695,29 @@ class SalonDataService {
           subscription_expires_at: newSalon.subscription_expires_at
         });
 
-        await supabase.from('salon_owners').insert({
-          user_id: data.ownerId,
+        if (salonErr) {
+          console.error('Supabase salons insert error:', salonErr);
+        } else {
+          console.log('Successfully registered salon in Supabase:', newSalon.id);
+        }
+
+        const { error: ownerErr } = await supabase.from('salon_owners').insert({
+          user_id: effectiveOwnerId,
           salon_id: newSalon.id,
           is_primary: true
         });
+
+        if (ownerErr) {
+          console.error('Supabase salon_owners insert error:', ownerErr);
+        }
       } catch (err) {
         console.warn('Supabase registerSalon insert error:', err);
       }
     }
 
     const servicesList: Service[] = (data.initialServices && data.initialServices.length > 0)
-      ? data.initialServices.map((s, idx) => ({
-          id: `srv-${salonId}-${idx}`,
+      ? data.initialServices.map((s) => ({
+          id: generateUUID(),
           salon_id: salonId,
           name: s.name,
           category: s.category,
@@ -645,7 +729,7 @@ class SalonDataService {
         }))
       : [
           {
-            id: `srv-${salonId}-1`,
+            id: generateUUID(),
             salon_id: salonId,
             name: 'Classic Precision Haircut',
             category: 'Hair',
@@ -656,7 +740,7 @@ class SalonDataService {
             is_active: true
           },
           {
-            id: `srv-${salonId}-2`,
+            id: generateUUID(),
             salon_id: salonId,
             name: 'Royal Hot Towel Beard Sculpt',
             category: 'Beard',
@@ -668,6 +752,26 @@ class SalonDataService {
           }
         ];
 
+    if (supabase) {
+      try {
+        await supabase.from('services').insert(
+          servicesList.map(s => ({
+            id: s.id,
+            salon_id: s.salon_id,
+            name: s.name,
+            category: s.category,
+            description: s.description,
+            duration_minutes: s.duration_minutes,
+            in_salon_price: s.in_salon_price,
+            home_service_price: s.home_service_price,
+            is_active: true
+          }))
+        );
+      } catch (err) {
+        console.warn('Supabase services insert error:', err);
+      }
+    }
+
     this.tenantData.set(salonId, {
       services: servicesList,
       appointments: [],
@@ -677,7 +781,7 @@ class SalonDataService {
       invoices: [],
       staff: [
         {
-          id: `staff-${salonId}-1`,
+          id: generateUUID(),
           salon_id: salonId,
           role: 'staff',
           full_name: data.ownerName || 'Lead Stylist',

@@ -332,12 +332,16 @@ ALTER TABLE notifications_log ENABLE ROW LEVEL SECURITY;
 
 -- Public read for marketplace browsing
 CREATE POLICY public_browse_active_salons ON salons FOR SELECT USING (true);
+CREATE POLICY public_insert_salons ON salons FOR INSERT WITH CHECK (true);
+CREATE POLICY owners_update_salons ON salons FOR UPDATE USING (true) WITH CHECK (true);
 CREATE POLICY public_browse_services ON services FOR SELECT USING (is_active = true);
 CREATE POLICY public_browse_staff ON profiles FOR SELECT USING (role = 'staff' AND is_active = true);
 CREATE POLICY public_view_tokens ON tokens FOR SELECT USING (true);
 
 -- Salon Owner / Manager / Staff Tenant Access
 CREATE POLICY salon_owners_policy ON salon_owners FOR ALL USING (user_id = auth.uid());
+CREATE POLICY salon_owners_insert_policy ON salon_owners FOR INSERT WITH CHECK (true);
+CREATE POLICY salon_owners_read_policy ON salon_owners FOR SELECT USING (true);
 CREATE POLICY profiles_tenant_access ON profiles FOR ALL USING (salon_id IN (SELECT get_user_salon_ids()) OR auth_user_id = auth.uid());
 CREATE POLICY services_tenant_access ON services FOR ALL USING (salon_id IN (SELECT get_user_salon_ids()));
 CREATE POLICY customers_tenant_access ON customers FOR ALL USING (salon_id IN (SELECT get_user_salon_ids()));

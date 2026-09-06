@@ -105,7 +105,7 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onTestLogin }) => {
           email,
           role: 'salon_owner',
           name: email.split('@')[0],
-          ownedSalonIds: ['a1b2c3d4-e5f6-4a5b-8c9d-0e1f2a3b4c5d']
+          ownedSalonIds: []
         });
       }
     } catch (err: unknown) {
@@ -198,7 +198,7 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onTestLogin }) => {
           email: 'google.guest@example.com',
           role: 'salon_owner',
           name: 'Google Verified User',
-          ownedSalonIds: ['a1b2c3d4-e5f6-4a5b-8c9d-0e1f2a3b4c5d']
+          ownedSalonIds: []
         });
       }
     } catch (err: unknown) {

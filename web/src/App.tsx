@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { Navbar } from './components/Navbar';
 import { AuthScreen } from './components/AuthScreen';
 import { SalonPickerScreen } from './components/SalonPickerScreen';
@@ -48,22 +48,27 @@ export function App() {
   const [activeTab, setActiveTab] = useState<string>('dashboard');
   const [trackingTokenCode, setTrackingTokenCode] = useState<string>('WBS-02');
 
+  // Stability Guards to eliminate repeated refresh/re-render loops
+  const lastAuthUserIdRef = useRef<string | null>(null);
+  const isResolvingRef = useRef<boolean>(false);
+
   // 1. Supabase Auth Session Listener
   useEffect(() => {
     if (supabase) {
-      supabase.auth.getSession().then(({ data: { session } }) => {
-        if (session?.user) {
-          handleAuthenticatedUser(session.user);
-        }
-      });
-
-      const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
-        if (session?.user) {
-          handleAuthenticatedUser(session.user);
-        } else {
+      const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
+        if (event === 'SIGNED_OUT') {
+          lastAuthUserIdRef.current = null;
           setCurrentUser(null);
           setSelectedSalon(null);
           setUserSalons([]);
+          return;
+        }
+
+        if (session?.user) {
+          // Only resolve if user is not already resolved or on explicit SIGNED_IN
+          if (event === 'SIGNED_IN' || lastAuthUserIdRef.current !== session.user.id) {
+            handleAuthenticatedUser(session.user);
+          }
         }
       });
 
@@ -71,7 +76,7 @@ export function App() {
     }
   }, []);
 
-  // 2. Re-render when data service mutates
+  // 2. Re-render when data service mutates (data mutations like tokens, appointments, etc.)
   useEffect(() => {
     const unsubscribe = salonDataService.subscribe(() => {
       setTick(prev => prev + 1);
@@ -80,100 +85,108 @@ export function App() {
   }, []);
 
   const handleAuthenticatedUser = async (user: { id: string; email?: string; user_metadata?: { full_name?: string } }) => {
-    const email = user.email || '';
-    let name = user.user_metadata?.full_name || email.split('@')[0] || 'Salon User';
+    if (isResolvingRef.current) return;
+    isResolvingRef.current = true;
+    try {
+      const email = user.email ? user.email.trim().toLowerCase() : '';
+      let name = user.user_metadata?.full_name || email.split('@')[0] || 'Salon User';
 
-    // 1. Server-side check: Super Admin
-    const isSuperAdmin = await salonDataService.checkIsSuperAdmin(email);
-    if (isSuperAdmin) {
-      return resolveSalonForUser({
+      // 1. Server-side check: Super Admin
+      const isSuperAdmin = await salonDataService.checkIsSuperAdmin(email);
+      if (isSuperAdmin) {
+        return await resolveSalonForUser({
+          id: user.id,
+          email,
+          name: name || 'Platform Super Admin',
+          role: 'super_admin'
+        });
+      }
+
+      // 2. Demo shortcuts for offline / testing convenience
+      if (email === 'kabir@westernboys.com' || email === 'kabir@westernboyssalon.com') {
+        return await resolveSalonForUser({
+          id: user.id,
+          email,
+          name: 'Kabir Khan',
+          role: 'salon_owner',
+          ownedSalonIds: [REGISTERED_SALONS[0].id, REGISTERED_SALONS[1].id]
+        });
+      }
+      if (email === 'rishi@westernboys.com' || email === 'rishi@udaipurlounge.com') {
+        return await resolveSalonForUser({
+          id: user.id,
+          email,
+          name: 'Rishi Mehra',
+          role: 'salon_owner',
+          ownedSalonIds: [REGISTERED_SALONS[1].id]
+        });
+      }
+      if (email === 'farhan@westernboys.com' || email === 'farhan@westernboyssalon.com') {
+        return await resolveSalonForUser({
+          id: user.id,
+          email,
+          name: 'Farhan Akhtar',
+          role: 'staff',
+          assignedSalonId: REGISTERED_SALONS[0].id
+        });
+      }
+      if (email === 'aman@westernboys.com' || email === 'aman@westernboyssalon.com') {
+        return await resolveSalonForUser({
+          id: user.id,
+          email,
+          name: 'Aman Sharma',
+          role: 'manager',
+          assignedSalonId: REGISTERED_SALONS[0].id
+        });
+      }
+
+      // 3. For any other real Google account or email login:
+      // Query their owned salons from database.
+      // They NEVER automatically inherit Jaipur salon!
+      const tempUser: AuthUser = {
         id: user.id,
         email,
-        name: name || 'Platform Super Admin',
-        role: 'super_admin'
-      });
-    }
-
-    // 2. Demo shortcuts for offline / testing convenience
-    if (email === 'kabir@westernboys.com') {
-      return resolveSalonForUser({
-        id: user.id,
-        email,
-        name: 'Kabir Khan',
+        name,
         role: 'salon_owner',
-        ownedSalonIds: [REGISTERED_SALONS[0].id, REGISTERED_SALONS[1].id]
-      });
-    }
-    if (email === 'rishi@westernboys.com') {
-      return resolveSalonForUser({
-        id: user.id,
-        email,
-        name: 'Rishi Mehra',
-        role: 'salon_owner',
-        ownedSalonIds: [REGISTERED_SALONS[1].id]
-      });
-    }
-    if (email === 'farhan@westernboys.com') {
-      return resolveSalonForUser({
-        id: user.id,
-        email,
-        name: 'Farhan Akhtar',
-        role: 'staff',
-        assignedSalonId: REGISTERED_SALONS[0].id
-      });
-    }
-    if (email === 'aman@westernboys.com') {
-      return resolveSalonForUser({
-        id: user.id,
-        email,
-        name: 'Aman Sharma',
-        role: 'manager',
-        assignedSalonId: REGISTERED_SALONS[0].id
-      });
-    }
+        ownedSalonIds: []
+      };
 
-    // 3. For any other real Google account or email login:
-    // Query their owned salons from database.
-    // They NEVER automatically inherit Jaipur salon!
-    const tempUser: AuthUser = {
-      id: user.id,
-      email,
-      name,
-      role: 'salon_owner',
-      ownedSalonIds: []
-    };
-
-    const owned = await salonDataService.fetchUserSalons(tempUser);
-    if (owned.length > 0) {
-      tempUser.ownedSalonIds = owned.map(s => s.id);
+      const owned = await salonDataService.fetchUserSalons(tempUser);
+      if (owned.length > 0) {
+        tempUser.ownedSalonIds = owned.map(s => s.id);
+      }
+      await resolveSalonForUser(tempUser, owned);
+    } finally {
+      isResolvingRef.current = false;
     }
-    resolveSalonForUser(tempUser);
   };
 
-  const resolveSalonForUser = async (user: AuthUser) => {
+  const resolveSalonForUser = async (user: AuthUser, initialSalons?: Salon[]) => {
     setCurrentUser(user);
+    lastAuthUserIdRef.current = user.id;
 
     // Customer route
     if (user.role === 'customer') {
-      setActiveTab('marketplace');
+      setActiveTab(prev => (prev === 'track' ? 'track' : 'marketplace'));
       setIsPickerActive(false);
       return;
     }
 
     // Super Admin route
     if (user.role === 'super_admin') {
-      const allSalons = await salonDataService.fetchUserSalons(user);
+      const allSalons = initialSalons || await salonDataService.getAllSalonsForAdmin();
       setUserSalons(allSalons);
-      setSelectedSalon(allSalons[0] || REGISTERED_SALONS[0]);
-      salonDataService.setActiveSalonId(allSalons[0]?.id || REGISTERED_SALONS[0].id);
-      setActiveTab('admin');
+      const defaultSalon = allSalons[0] || REGISTERED_SALONS[0];
+      setSelectedSalon(defaultSalon);
+      salonDataService.setActiveSalonId(defaultSalon.id);
+      setActiveTab(prev => (prev === 'admin' ? prev : 'admin'));
       setIsPickerActive(false);
       return;
     }
 
     // Salon Owner route (Multi vs Single Salon Logic)
     if (user.role === 'salon_owner') {
-      const owned = await salonDataService.fetchUserSalons(user);
+      const owned = initialSalons !== undefined ? initialSalons : await salonDataService.fetchUserSalons(user);
       setUserSalons(owned);
 
       if (owned.length === 0) {
@@ -192,13 +205,17 @@ export function App() {
         setSelectedSalon(owned[0]);
         salonDataService.setActiveSalonId(owned[0].id);
         setIsPickerActive(false);
-        setActiveTab('dashboard');
+        // Preserve active tab if user was already on a valid screen
+        setActiveTab(prev => {
+          const validTabs = ['dashboard', 'queue', 'marketplace', 'book', 'track', 'whatsapp', 'staff', 'verifications', 'services', 'inventory', 'customers', 'invoices', 'analytics'];
+          return validTabs.includes(prev) ? prev : 'dashboard';
+        });
       }
       return;
     }
 
     // Staff or Manager route
-    const salons = await salonDataService.fetchUserSalons(user);
+    const salons = initialSalons || await salonDataService.fetchUserSalons(user);
     const assigned = salons[0] || REGISTERED_SALONS[0];
     setSelectedSalon(assigned);
     salonDataService.setActiveSalonId(assigned.id);
@@ -214,6 +231,7 @@ export function App() {
   };
 
   const handleLogout = async () => {
+    lastAuthUserIdRef.current = null;
     if (supabase) {
       await supabase.auth.signOut().catch(() => {});
     }
@@ -221,6 +239,7 @@ export function App() {
     setSelectedSalon(null);
     setUserSalons([]);
     setIsPickerActive(false);
+    setActiveTab('dashboard');
   };
 
   const handleNavigateToTrack = (tokenCode: string) => {
@@ -280,6 +299,10 @@ export function App() {
         onSalonRegistered={(newSalon) => {
           setUserSalons([newSalon]);
           setSelectedSalon(newSalon);
+          setCurrentUser(prev => prev ? {
+            ...prev,
+            ownedSalonIds: [newSalon.id]
+          } : null);
           salonDataService.setActiveSalonId(newSalon.id);
           setIsPickerActive(false);
           setActiveTab('dashboard');

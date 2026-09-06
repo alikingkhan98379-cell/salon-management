@@ -24,6 +24,7 @@ import {
   DollarSign
 } from 'lucide-react';
 import { salonDataService } from '../lib/salonDataService';
+import { supabase } from '../lib/supabaseClient';
 import { Salon, AdminAuditLog } from '../types';
 
 interface SuperAdminConsoleProps {
@@ -40,6 +41,7 @@ export const SuperAdminConsole: React.FC<SuperAdminConsoleProps> = ({
   const [searchQuery, setSearchQuery] = useState('');
   const [isVerifyingSecurity, setIsVerifyingSecurity] = useState(true);
   const [isAuthorized, setIsAuthorized] = useState(false);
+  const [isRefreshing, setIsRefreshing] = useState(false);
   const [activeTab, setActiveTab] = useState<'salons' | 'analytics' | 'audit'>('salons');
 
   // Salon Inspection Modal (Read-Only)
@@ -58,7 +60,7 @@ export const SuperAdminConsole: React.FC<SuperAdminConsoleProps> = ({
         setIsAuthorized(isSuperAdmin);
 
         if (isSuperAdmin) {
-          const all = await salonDataService.getAllSalons();
+          const all = await salonDataService.getAllSalonsForAdmin();
           setSalons(all);
           setAuditLogs(salonDataService.getAdminAuditLogs());
 
@@ -113,10 +115,47 @@ export const SuperAdminConsole: React.FC<SuperAdminConsoleProps> = ({
     };
   }, [onLogout]);
 
+  // 3. Real-Time Updates: Listen to local cache events and Supabase Postgres Realtime changes
+  useEffect(() => {
+    if (!isAuthorized) return;
+
+    // Listen to local mutations (e.g. salon registered in same browser)
+    const unsubLocal = salonDataService.subscribe(() => {
+      loadData();
+    });
+
+    // Listen to Supabase Realtime changes across all connected clients
+    let channel: any = null;
+    if (supabase) {
+      channel = supabase
+        .channel('superadmin-salons-realtime')
+        .on(
+          'postgres_changes',
+          { event: '*', schema: 'public', table: 'salons' },
+          () => {
+            loadData();
+          }
+        )
+        .subscribe();
+    }
+
+    return () => {
+      unsubLocal();
+      if (channel && supabase) {
+        supabase.removeChannel(channel);
+      }
+    };
+  }, [isAuthorized]);
+
   const loadData = async () => {
-    const all = await salonDataService.getAllSalons();
-    setSalons(all);
-    setAuditLogs(salonDataService.getAdminAuditLogs());
+    setIsRefreshing(true);
+    try {
+      const all = await salonDataService.getAllSalonsForAdmin();
+      setSalons(all);
+      setAuditLogs(salonDataService.getAdminAuditLogs());
+    } finally {
+      setIsRefreshing(false);
+    }
   };
 
   // Actions
@@ -125,6 +164,18 @@ export const SuperAdminConsole: React.FC<SuperAdminConsoleProps> = ({
     salon.subscription_status = 'trial';
     salon.trial_ends_at = newExpiry;
     salon.subscription_expires_at = newExpiry;
+
+    if (supabase) {
+      try {
+        await supabase.from('salons').update({
+          subscription_status: 'trial',
+          trial_ends_at: newExpiry,
+          subscription_expires_at: newExpiry
+        }).eq('id', salon.id);
+      } catch (err) {
+        console.warn('Extend trial error:', err);
+      }
+    }
 
     await salonDataService.logAdminAction(
       adminEmail,
@@ -148,6 +199,15 @@ export const SuperAdminConsole: React.FC<SuperAdminConsoleProps> = ({
 
   const handleMarkExpired = async (salon: Salon) => {
     salon.subscription_status = 'expired';
+    if (supabase) {
+      try {
+        await supabase.from('salons').update({
+          subscription_status: 'expired'
+        }).eq('id', salon.id);
+      } catch (err) {
+        console.warn('Expire salon error:', err);
+      }
+    }
     await salonDataService.logAdminAction(
       adminEmail,
       'MANUAL_EXPIRE_SALON',
@@ -313,10 +373,11 @@ export const SuperAdminConsole: React.FC<SuperAdminConsoleProps> = ({
             <button
               type="button"
               onClick={loadData}
-              className="px-4 py-2.5 bg-slate-900 border border-slate-800 hover:bg-slate-800 rounded-2xl text-xs font-semibold text-slate-300 flex items-center gap-1.5 transition self-start sm:self-auto"
+              disabled={isRefreshing}
+              className="px-4 py-2.5 bg-slate-900 border border-slate-800 hover:bg-slate-800 rounded-2xl text-xs font-semibold text-slate-300 flex items-center gap-1.5 transition self-start sm:self-auto disabled:opacity-50"
             >
-              <RefreshCw className="w-3.5 h-3.5" />
-              <span>Refresh Salons</span>
+              <RefreshCw className={`w-3.5 h-3.5 ${isRefreshing ? 'animate-spin text-amber-400' : ''}`} />
+              <span>{isRefreshing ? 'Refreshing...' : 'Refresh Salons'}</span>
             </button>
           </div>
 
