@@ -16,7 +16,9 @@ import {
   Clock,
   LogOut,
   User,
-  ShoppingBag
+  ShoppingBag,
+  ShieldCheck,
+  Sparkles
 } from 'lucide-react';
 import { UserRole, Salon } from '../types';
 
@@ -31,6 +33,7 @@ interface NavbarProps {
   activeSalon: Salon;
   currentServingToken?: string;
   waitingCount: number;
+  pendingVerificationsCount?: number;
 }
 
 export const Navbar: React.FC<NavbarProps> = ({
@@ -43,7 +46,8 @@ export const Navbar: React.FC<NavbarProps> = ({
   onTabChange,
   activeSalon,
   currentServingToken,
-  waitingCount
+  waitingCount,
+  pendingVerificationsCount
 }) => {
   return (
     <header className="sticky top-0 z-40 bg-[#0B0F19]/95 backdrop-blur-md border-b border-slate-800 text-slate-100">
@@ -64,6 +68,11 @@ export const Navbar: React.FC<NavbarProps> = ({
                 <span className="text-[10px] uppercase font-bold tracking-widest bg-amber-500/10 text-amber-400 border border-amber-500/30 px-1.5 py-0.5 rounded">
                   SaaS
                 </span>
+                {activeSalon.subscription_status === 'trial' && (
+                  <span className="text-[10px] font-semibold bg-emerald-500/15 text-emerald-400 border border-emerald-500/30 px-2 py-0.5 rounded-full flex items-center gap-1">
+                    <Sparkles className="w-2.5 h-2.5" /> Free Trial
+                  </span>
+                )}
               </div>
               <p className="text-xs text-slate-400 font-sans">
                 {activeSalon.name} • {activeSalon.city}
@@ -244,6 +253,23 @@ export const Navbar: React.FC<NavbarProps> = ({
           {/* Owner & Manager tabs */}
           {(currentRole === 'salon_owner' || currentRole === 'manager') && (
             <>
+              <button
+                onClick={() => onTabChange('verifications')}
+                className={`flex items-center space-x-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all whitespace-nowrap ${
+                  activeTab === 'verifications'
+                    ? 'bg-amber-500/15 text-amber-400 border border-amber-500/30 shadow-sm'
+                    : 'text-slate-400 hover:text-white hover:bg-slate-800/50'
+                }`}
+              >
+                <ShieldCheck className="w-3.5 h-3.5 text-emerald-400" />
+                <span>Verify Payments</span>
+                {pendingVerificationsCount !== undefined && pendingVerificationsCount > 0 && (
+                  <span className="ml-1 px-1.5 py-0.2 rounded-full bg-rose-500 text-white font-mono text-[10px] font-bold animate-pulse">
+                    {pendingVerificationsCount}
+                  </span>
+                )}
+              </button>
+
               <button
                 onClick={() => onTabChange('services')}
                 className={`flex items-center space-x-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all whitespace-nowrap ${

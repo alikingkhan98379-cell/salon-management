@@ -40,6 +40,24 @@ CREATE TYPE subscription_plan_type AS ENUM ('base_monthly', 'half_yearly', 'year
 CREATE TYPE subscription_status_type AS ENUM ('trial', 'active', 'past_due', 'expired');
 
 -- ==============================================================================
+-- 3b. Platform Super Admins Table & Audit Log
+-- ==============================================================================
+CREATE TABLE IF NOT EXISTS platform_admins (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    email VARCHAR(255) UNIQUE NOT NULL,
+    created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS admin_audit_logs (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    admin_email VARCHAR(255) NOT NULL,
+    action VARCHAR(100) NOT NULL,
+    target_salon_id UUID,
+    details JSONB DEFAULT '{}'::jsonb,
+    created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- ==============================================================================
 -- 4. Salons Table (Tenants)
 -- ==============================================================================
 CREATE TABLE salons (
@@ -51,13 +69,19 @@ CREATE TABLE salons (
     address TEXT NOT NULL,
     city VARCHAR(100) DEFAULT 'Jaipur',
     state VARCHAR(100) DEFAULT 'Rajasthan',
+    pincode VARCHAR(10),
+    latitude NUMERIC(10, 7),
+    longitude NUMERIC(10, 7),
     logo_url TEXT,
     currency VARCHAR(10) DEFAULT 'INR',
     currency_symbol VARCHAR(5) DEFAULT '₹',
+    upi_id VARCHAR(100) DEFAULT 'westernboys@upi',
+    upi_qr_url TEXT,
     subscription_plan subscription_plan_type DEFAULT 'base_monthly',
     billing_cycle VARCHAR(20) DEFAULT 'monthly',
-    subscription_status subscription_status_type DEFAULT 'active',
-    subscription_expires_at TIMESTAMPTZ DEFAULT (NOW() + INTERVAL '30 days'),
+    subscription_status subscription_status_type DEFAULT 'trial',
+    trial_ends_at TIMESTAMPTZ DEFAULT (NOW() + INTERVAL '7 days'),
+    subscription_expires_at TIMESTAMPTZ DEFAULT (NOW() + INTERVAL '7 days'),
     created_at TIMESTAMPTZ DEFAULT NOW(),
     updated_at TIMESTAMPTZ DEFAULT NOW()
 );
@@ -163,6 +187,10 @@ CREATE TABLE appointments (
     amount NUMERIC(10, 2) NOT NULL,
     payment_status payment_status NOT NULL DEFAULT 'pending',
     payment_gateway payment_gateway NOT NULL DEFAULT 'mock_razorpay',
+    payment_screenshot_url TEXT,
+    payment_verified_at TIMESTAMPTZ,
+    payment_verified_by UUID REFERENCES profiles(id) ON DELETE SET NULL,
+    rejection_reason TEXT,
     transaction_ref VARCHAR(255),
     notes TEXT,
     home_service_address TEXT,
@@ -180,6 +208,7 @@ CREATE TABLE tokens (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     salon_id UUID NOT NULL REFERENCES salons(id) ON DELETE CASCADE,
     appointment_id UUID NOT NULL REFERENCES appointments(id) ON DELETE CASCADE,
+    stylist_id UUID REFERENCES profiles(id) ON DELETE SET NULL,
     token_number INT NOT NULL,
     token_code VARCHAR(50) NOT NULL,
     queue_date DATE NOT NULL DEFAULT CURRENT_DATE,
@@ -249,24 +278,40 @@ CREATE TABLE notifications_log (
     created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
-CREATE INDEX idx_notifications_salon ON notifications_log(salon_id);
+-- ==============================================================================
+-- 14. Server-Side Security Functions: Super Admin Check & Tenant Scoping
+-- ==============================================================================
+CREATE OR REPLACE FUNCTION is_platform_admin(check_email TEXT)
+RETURNS BOOLEAN AS $$
+BEGIN
+    IF check_email IS NULL OR check_email = '' THEN
+        RETURN FALSE;
+    END IF;
+    RETURN EXISTS (
+        SELECT 1 FROM platform_admins WHERE LOWER(email) = LOWER(check_email)
+    );
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
 
--- ==============================================================================
--- 14. Helper Function: Get Scoped Salon IDs for Authenticated User
--- ==============================================================================
 CREATE OR REPLACE FUNCTION get_user_salon_ids()
 RETURNS TABLE (salon_id UUID) AS $$
 DECLARE
     user_role_val user_role;
+    user_email_val TEXT;
 BEGIN
-    SELECT role INTO user_role_val FROM profiles WHERE auth_user_id = auth.uid() LIMIT 1;
+    user_email_val := auth.jwt() ->> 'email';
 
-    IF user_role_val = 'super_admin' THEN
+    IF is_platform_admin(user_email_val) THEN
         RETURN QUERY SELECT id FROM salons;
-    ELSIF user_role_val = 'salon_owner' THEN
-        RETURN QUERY SELECT so.salon_id FROM salon_owners so WHERE so.user_id = auth.uid();
     ELSE
-        RETURN QUERY SELECT p.salon_id FROM profiles p WHERE p.auth_user_id = auth.uid() AND p.salon_id IS NOT NULL;
+        SELECT role INTO user_role_val FROM profiles WHERE auth_user_id = auth.uid() LIMIT 1;
+        IF user_role_val = 'super_admin' THEN
+            RETURN QUERY SELECT id FROM salons;
+        ELSIF user_role_val = 'salon_owner' THEN
+            RETURN QUERY SELECT so.salon_id FROM salon_owners so WHERE so.user_id = auth.uid();
+        ELSE
+            RETURN QUERY SELECT p.salon_id FROM profiles p WHERE p.auth_user_id = auth.uid() AND p.salon_id IS NOT NULL;
+        END IF;
     END IF;
 END;
 $$ LANGUAGE plpgsql SECURITY DEFINER;
@@ -348,8 +393,10 @@ INSERT INTO salons (
     'active'
 );
 
--- Profiles
--- 1. Super Admin
+-- Profiles & Platform Admins
+-- 1. Super Admin Seed
+INSERT INTO platform_admins (email) VALUES ('admin@westernboyssaas.com') ON CONFLICT (email) DO NOTHING;
+
 INSERT INTO profiles (id, auth_user_id, salon_id, role, full_name, phone, email, specialties, rating)
 VALUES ('00000000-0000-0000-0000-000000000001', '00000000-0000-0000-0000-000000000001', NULL, 'super_admin', 'Platform Super Admin', '+91 99999 00000', 'admin@westernboyssaas.com', ARRAY['Platform Overseer'], 5.0);
 

@@ -10,7 +10,9 @@ import {
   Invoice, 
   NotificationLog, 
   UserRole,
-  CustomerVisitRecord
+  CustomerVisitRecord,
+  SubscriptionPlanType,
+  AdminAuditLog
 } from '../types';
 
 // Registered default salons for seed/fallback
@@ -24,11 +26,19 @@ export const REGISTERED_SALONS: Salon[] = [
     address: 'Shop 14, Royal Heritage Arcade, Vaishali Nagar',
     city: 'Jaipur',
     state: 'Rajasthan',
+    pincode: '302021',
+    latitude: 26.9048,
+    longitude: 75.7483,
     currency: 'INR',
     currency_symbol: '₹',
+    upi_id: 'jaipur.westernboys@okhdfcbank',
+    owner_name: 'Kabir Khan',
+    owner_email: 'kabir@westernboyssalon.com',
     subscription_plan: 'base_monthly',
     billing_cycle: 'monthly',
     subscription_status: 'active',
+    trial_ends_at: '2026-09-30T10:00:00Z',
+    subscription_expires_at: '2026-10-30T10:00:00Z',
     created_at: '2026-01-10T10:00:00Z',
   },
   {
@@ -40,11 +50,19 @@ export const REGISTERED_SALONS: Salon[] = [
     address: 'Level 2, Celebration Mall Complex, Bhuwana',
     city: 'Udaipur',
     state: 'Rajasthan',
+    pincode: '313001',
+    latitude: 24.6186,
+    longitude: 73.7082,
     currency: 'INR',
     currency_symbol: '₹',
+    upi_id: 'udaipur.grooming@icici',
+    owner_name: 'Rishi Mehra',
+    owner_email: 'rishi@udaipurlounge.com',
     subscription_plan: 'yearly',
     billing_cycle: '1_year',
     subscription_status: 'active',
+    trial_ends_at: '2026-10-15T10:00:00Z',
+    subscription_expires_at: '2027-02-15T10:00:00Z',
     created_at: '2026-02-15T10:00:00Z',
   }
 ];
@@ -436,7 +454,30 @@ class SalonDataService {
     return this.allSalonsCache.find(s => s.id === this.activeSalonId) || this.allSalonsCache[0] || REGISTERED_SALONS[0];
   }
 
-  // Load Salons for User according to role
+  // Check if user is platform Super Admin server-side via Supabase RPC
+  public async checkIsSuperAdmin(email?: string): Promise<boolean> {
+    if (!email) return false;
+    const cleanEmail = email.trim().toLowerCase();
+    if (supabase) {
+      try {
+        const { data, error } = await supabase.rpc('is_platform_admin', { check_email: cleanEmail });
+        if (!error && typeof data === 'boolean') {
+          return data;
+        }
+        const { data: adminRows } = await supabase
+          .from('platform_admins')
+          .select('id')
+          .ilike('email', cleanEmail)
+          .limit(1);
+        if (adminRows && adminRows.length > 0) return true;
+      } catch (err) {
+        console.warn('Supabase is_platform_admin check error:', err);
+      }
+    }
+    return cleanEmail === 'admin@westernboyssaas.com';
+  }
+
+  // Load Salons for User according to role - STRICT: ZERO DEFAULT LEAKAGE
   public async fetchUserSalons(user: { id: string; role: UserRole; ownedSalonIds?: string[]; assignedSalonId?: string }): Promise<Salon[]> {
     if (supabase) {
       try {
@@ -470,36 +511,364 @@ class SalonDataService {
       }
     }
 
-    // Role-based local resolution fallback
+    // Role-based local resolution fallback - STRICT: NEVER return default salon if not authorized
     if (user.role === 'super_admin') {
       return [...this.allSalonsCache];
     } else if (user.role === 'salon_owner') {
       if (user.ownedSalonIds && user.ownedSalonIds.length > 0) {
         return this.getSalonsByIds(user.ownedSalonIds);
       }
-      return [this.allSalonsCache[0]];
+      return []; // Return empty so unassigned owners are routed to "Register Your Salon"
     } else if (user.assignedSalonId) {
       return this.getSalonsByIds([user.assignedSalonId]);
     }
-    return [this.allSalonsCache[0]];
+    return []; // Never leak any salon to an unknown user!
   }
 
-  // Marketplace: Get all active salons for customers
+  // Marketplace: Get all active salons for customers (excludes expired salons)
   public async getAllSalons(): Promise<Salon[]> {
     if (supabase) {
       try {
-        const { data } = await supabase.from('salons').select('*').eq('subscription_status', 'active');
+        const { data } = await supabase
+          .from('salons')
+          .select('*')
+          .neq('subscription_status', 'expired');
         if (data && data.length > 0) {
           this.allSalonsCache = data;
           return data;
         }
       } catch {}
     }
-    return this.allSalonsCache;
+    return this.allSalonsCache.filter(s => s.subscription_status !== 'expired');
   }
 
   public getSalonsByIds(ids: string[]): Salon[] {
     return this.allSalonsCache.filter(s => ids.includes(s.id));
+  }
+
+  // Self-Serve Salon Registration with 7-Day Free Trial
+  public async registerSalon(data: {
+    name: string;
+    phone: string;
+    email: string;
+    address: string;
+    city: string;
+    state: string;
+    pincode?: string;
+    latitude?: number;
+    longitude?: number;
+    upi_id?: string;
+    ownerId: string;
+    ownerName: string;
+    ownerEmail: string;
+    initialServices?: Array<{
+      name: string;
+      category: 'Hair' | 'Beard' | 'Combo' | 'Skin' | 'Spa';
+      duration_minutes: number;
+      in_salon_price: number;
+      home_service_price: number;
+    }>;
+  }): Promise<Salon> {
+    const salonId = `salon-${Date.now()}`;
+    const slug = data.name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '') || `salon-${Date.now()}`;
+    const now = new Date();
+    const trialEnds = new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000).toISOString();
+
+    const newSalon: Salon = {
+      id: salonId,
+      name: data.name,
+      slug,
+      phone: data.phone,
+      email: data.email,
+      address: data.address,
+      city: data.city,
+      state: data.state,
+      pincode: data.pincode,
+      latitude: data.latitude,
+      longitude: data.longitude,
+      currency: 'INR',
+      currency_symbol: '₹',
+      upi_id: data.upi_id || 'westernboys@upi',
+      owner_name: data.ownerName,
+      owner_email: data.ownerEmail,
+      subscription_plan: 'base_monthly',
+      billing_cycle: 'monthly',
+      subscription_status: 'trial',
+      trial_ends_at: trialEnds,
+      subscription_expires_at: trialEnds,
+      created_at: now.toISOString(),
+    };
+
+    if (supabase) {
+      try {
+        await supabase.from('salons').insert({
+          id: newSalon.id,
+          name: newSalon.name,
+          slug: newSalon.slug,
+          phone: newSalon.phone,
+          email: newSalon.email,
+          address: newSalon.address,
+          city: newSalon.city,
+          state: newSalon.state,
+          pincode: newSalon.pincode,
+          latitude: newSalon.latitude,
+          longitude: newSalon.longitude,
+          upi_id: newSalon.upi_id,
+          subscription_plan: newSalon.subscription_plan,
+          billing_cycle: newSalon.billing_cycle,
+          subscription_status: newSalon.subscription_status,
+          trial_ends_at: newSalon.trial_ends_at,
+          subscription_expires_at: newSalon.subscription_expires_at
+        });
+
+        await supabase.from('salon_owners').insert({
+          user_id: data.ownerId,
+          salon_id: newSalon.id,
+          is_primary: true
+        });
+      } catch (err) {
+        console.warn('Supabase registerSalon insert error:', err);
+      }
+    }
+
+    const servicesList: Service[] = (data.initialServices && data.initialServices.length > 0)
+      ? data.initialServices.map((s, idx) => ({
+          id: `srv-${salonId}-${idx}`,
+          salon_id: salonId,
+          name: s.name,
+          category: s.category,
+          description: 'Custom Salon Service',
+          duration_minutes: s.duration_minutes,
+          in_salon_price: s.in_salon_price,
+          home_service_price: s.home_service_price,
+          is_active: true
+        }))
+      : [
+          {
+            id: `srv-${salonId}-1`,
+            salon_id: salonId,
+            name: 'Classic Precision Haircut',
+            category: 'Hair',
+            description: 'Precision cut tailored to face profile with wash.',
+            duration_minutes: 30,
+            in_salon_price: 250,
+            home_service_price: 450,
+            is_active: true
+          },
+          {
+            id: `srv-${salonId}-2`,
+            salon_id: salonId,
+            name: 'Royal Hot Towel Beard Sculpt',
+            category: 'Beard',
+            description: 'Straight razor trim, steam, and beard oil nourishment.',
+            duration_minutes: 20,
+            in_salon_price: 180,
+            home_service_price: 300,
+            is_active: true
+          }
+        ];
+
+    this.tenantData.set(salonId, {
+      services: servicesList,
+      appointments: [],
+      tokens: [],
+      inventory: [],
+      customers: [],
+      invoices: [],
+      staff: [
+        {
+          id: `staff-${salonId}-1`,
+          salon_id: salonId,
+          role: 'staff',
+          full_name: data.ownerName || 'Lead Stylist',
+          phone: data.phone,
+          specialties: ['Precision Fade', 'Hot Towel Beard'],
+          rating: 5.0,
+          commission_rate: 0,
+          is_active: true
+        }
+      ]
+    });
+
+    this.allSalonsCache.unshift(newSalon);
+    this.activeSalonId = salonId;
+    this.notify();
+    return newSalon;
+  }
+
+  // Renew Subscription / Upgrade Plan
+  public async renewSubscription(
+    salonId: string,
+    plan: SubscriptionPlanType,
+    cycle: 'monthly' | '6_months' | '1_year'
+  ): Promise<Salon | null> {
+    const salon = this.allSalonsCache.find(s => s.id === salonId);
+    if (!salon) return null;
+
+    const daysToAdd = cycle === '1_year' ? 365 : cycle === '6_months' ? 180 : 30;
+    const now = new Date();
+    const currentExpiry = salon.subscription_expires_at ? new Date(salon.subscription_expires_at) : now;
+    const baseDate = currentExpiry > now ? currentExpiry : now;
+    const newExpiry = new Date(baseDate.getTime() + daysToAdd * 24 * 60 * 60 * 1000).toISOString();
+
+    salon.subscription_status = 'active';
+    salon.subscription_plan = plan;
+    salon.billing_cycle = cycle;
+    salon.subscription_expires_at = newExpiry;
+
+    if (supabase) {
+      try {
+        await supabase.from('salons').update({
+          subscription_status: 'active',
+          subscription_plan: plan,
+          billing_cycle: cycle,
+          subscription_expires_at: newExpiry
+        }).eq('id', salonId);
+      } catch (err) {
+        console.warn('Supabase renewSubscription error:', err);
+      }
+    }
+
+    this.notify();
+    return salon;
+  }
+
+  // Payment Screenshot Verification Flows
+  public async verifyPayment(appointmentId: string, staffId?: string): Promise<boolean> {
+    let found = false;
+    for (const [_, store] of this.tenantData.entries()) {
+      const appt = store.appointments.find(a => a.id === appointmentId);
+      if (appt) {
+        appt.payment_status = 'completed';
+        appt.status = 'confirmed';
+        appt.payment_verified_at = new Date().toISOString();
+        if (staffId) appt.payment_verified_by = staffId;
+
+        const tok = store.tokens.find(t => t.appointment_id === appointmentId);
+        if (tok) {
+          tok.is_verified = true;
+          tok.status = 'waiting';
+        }
+        found = true;
+        break;
+      }
+    }
+
+    if (supabase) {
+      try {
+        await supabase.from('appointments').update({
+          payment_status: 'completed',
+          status: 'confirmed',
+          payment_verified_at: new Date().toISOString()
+        }).eq('id', appointmentId);
+      } catch (err) {
+        console.warn('Supabase verifyPayment error:', err);
+      }
+    }
+
+    this.notify();
+    return found;
+  }
+
+  public async rejectPayment(appointmentId: string, reason: string): Promise<boolean> {
+    let found = false;
+    for (const [_, store] of this.tenantData.entries()) {
+      const appt = store.appointments.find(a => a.id === appointmentId);
+      if (appt) {
+        appt.payment_status = 'failed';
+        appt.status = 'cancelled';
+        appt.rejection_reason = reason;
+
+        const tok = store.tokens.find(t => t.appointment_id === appointmentId);
+        if (tok) {
+          tok.status = 'skipped';
+        }
+        found = true;
+        break;
+      }
+    }
+
+    if (supabase) {
+      try {
+        await supabase.from('appointments').update({
+          payment_status: 'failed',
+          status: 'cancelled',
+          rejection_reason: reason
+        }).eq('id', appointmentId);
+      } catch (err) {
+        console.warn('Supabase rejectPayment error:', err);
+      }
+    }
+
+    this.notify();
+    return found;
+  }
+
+  public getPendingVerifications(salonId?: string): Appointment[] {
+    const id = salonId || this.activeSalonId;
+    const store = this.getStore(id);
+    return store.appointments.filter(a => 
+      a.payment_status === 'pending' || a.status === 'pending'
+    );
+  }
+
+  // Haversine Distance Calculation (km)
+  public calculateDistanceKm(lat1: number, lon1: number, lat2: number, lon2: number): number {
+    const R = 6371; // Earth radius in km
+    const dLat = (lat2 - lat1) * (Math.PI / 180);
+    const dLon = (lon2 - lon1) * (Math.PI / 180);
+    const a =
+      Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+      Math.cos(lat1 * (Math.PI / 180)) * Math.cos(lat2 * (Math.PI / 180)) *
+      Math.sin(dLon / 2) * Math.sin(dLon / 2);
+    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+    return Math.round((R * c) * 10) / 10;
+  }
+
+  // Admin Audit Logging
+  private auditLogs: AdminAuditLog[] = [
+    {
+      id: 'log-seed-1',
+      admin_email: 'admin@westernboyssaas.com',
+      action: 'PLATFORM_BOOTSTRAP',
+      target_salon_name: 'Platform',
+      details: { message: 'Multi-tenant cloud initialized with 2 seeded salons' },
+      created_at: new Date(Date.now() - 3600000).toISOString()
+    }
+  ];
+
+  public async logAdminAction(adminEmail: string, action: string, targetSalonId?: string, details?: any): Promise<void> {
+    const salon = targetSalonId ? this.allSalonsCache.find(s => s.id === targetSalonId) : undefined;
+    const newLog: AdminAuditLog = {
+      id: `log-${Date.now()}`,
+      admin_email: adminEmail,
+      action,
+      target_salon_id: targetSalonId,
+      target_salon_name: salon?.name,
+      details: details || {},
+      created_at: new Date().toISOString()
+    };
+    this.auditLogs.unshift(newLog);
+
+    if (supabase) {
+      try {
+        await supabase.from('admin_audit_logs').insert({
+          id: newLog.id,
+          admin_email: adminEmail,
+          action,
+          target_salon_id: targetSalonId,
+          details: newLog.details,
+          created_at: newLog.created_at
+        });
+      } catch (err) {
+        console.warn('Supabase logAdminAction error:', err);
+      }
+    }
+    this.notify();
+  }
+
+  public getAdminAuditLogs(): AdminAuditLog[] {
+    return [...this.auditLogs];
   }
 
   // Tenant-Scoped Data Getters
@@ -922,11 +1291,12 @@ class SalonDataService {
     homeAddress?: string;
     allergyNotes?: string;
     paymentGateway: 'mock_razorpay' | 'cash' | 'upi';
+    paymentScreenshotUrl?: string;
   }): Promise<{ appointment: Appointment; token: Token }> {
     const store = this.getStore(data.salonId);
     const salon = this.allSalonsCache.find(s => s.id === data.salonId) || this.getActiveSalon();
     const service = store.services.find(s => s.id === data.serviceId);
-    const staff = store.staff.find(st => st.id === data.staffId);
+    const staff = store.staff.find(st => st.id === data.staffId) || store.staff[0];
 
     const price = service 
       ? (data.serviceType === 'home_service' ? service.home_service_price : service.in_salon_price)
@@ -960,6 +1330,8 @@ class SalonDataService {
     const tokenCode = `${prefix}-${String(tokenNumber).padStart(2, '0')}`;
     const waitMinutes = (tokenNumber - 1) * 20;
 
+    const isPendingVerification = Boolean(data.paymentScreenshotUrl);
+
     // 3. Create appointment
     const apptId = `appt-${Date.now()}`;
     const newAppointment: Appointment = {
@@ -970,36 +1342,40 @@ class SalonDataService {
       customer_name: data.customerName,
       customer_phone: data.customerPhone,
       staff_id: staff?.id,
-      staff_name: staff?.full_name || 'First Available Stylist',
+      staff_name: staff?.full_name || 'Selected Stylist',
       service_id: data.serviceId,
       service_name: service?.name || 'Custom Service',
       service_type: data.serviceType,
       booking_channel: data.bookingChannel,
       appointment_date: data.appointmentDate,
       time_slot: data.timeSlot,
-      status: 'confirmed',
+      status: isPendingVerification ? 'pending' : 'confirmed',
       amount: price,
-      payment_status: 'completed',
+      payment_status: isPendingVerification ? 'pending' : 'completed',
       payment_gateway: data.paymentGateway,
+      payment_screenshot_url: data.paymentScreenshotUrl,
       home_service_address: data.homeAddress,
       token_number: tokenNumber,
       token_code: tokenCode,
       created_at: new Date().toISOString(),
     };
 
-    // 4. Create live queue token
+    // 4. Create live queue token tightly bound to salon and stylist
     const newToken: Token = {
       id: `tok-${Date.now()}`,
       salon_id: data.salonId,
+      salon_name: salon.name,
       appointment_id: apptId,
+      stylist_id: staff?.id,
+      staff_name: staff?.full_name || 'Selected Stylist',
       token_number: tokenNumber,
       token_code: tokenCode,
       customer_name: data.customerName,
       service_name: service?.name || 'Custom Service',
-      staff_name: staff?.full_name || 'First Available Stylist',
       service_type: data.serviceType,
       queue_date: data.appointmentDate,
       status: 'waiting',
+      is_verified: !isPendingVerification,
       estimated_wait_minutes: waitMinutes,
       created_at: new Date().toISOString(),
     };

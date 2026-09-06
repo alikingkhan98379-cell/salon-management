@@ -203,7 +203,9 @@ export const TokenTracker: React.FC<TokenTrackerProps> = ({ initialTokenCode, on
             {/* Status Pill */}
             <div className="sm:text-right shrink-0">
               <span className={`px-3 py-1 rounded-full text-xs font-bold uppercase tracking-wider ${
-                token.status === 'serving'
+                token.is_verified === false
+                  ? 'bg-amber-500/20 text-amber-300 border border-amber-500/40 animate-pulse'
+                  : token.status === 'serving'
                   ? 'bg-amber-500 text-slate-950 animate-pulse font-extrabold shadow-lg shadow-amber-500/30'
                   : token.status === 'waiting'
                   ? 'bg-blue-500/20 text-blue-400 border border-blue-500/30'
@@ -211,10 +213,38 @@ export const TokenTracker: React.FC<TokenTrackerProps> = ({ initialTokenCode, on
                   ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30'
                   : 'bg-red-500/20 text-red-400'
               }`}>
-                {token.status === 'serving' ? '● Now Serving in Chair!' : token.status.toUpperCase()}
+                {token.is_verified === false ? '⏳ Verification Pending' : token.status === 'serving' ? '● Now Serving in Chair!' : token.status.toUpperCase()}
               </span>
             </div>
           </div>
+
+          {/* Payment Verification Pending Notice */}
+          {token.is_verified === false && (
+            <div className="bg-amber-500/10 border border-amber-500/30 rounded-2xl p-4 flex items-start gap-3 text-left">
+              <div className="p-2 rounded-xl bg-amber-500/20 text-amber-400 shrink-0">
+                <Clock className="w-5 h-5 animate-spin" />
+              </div>
+              <div>
+                <span className="text-xs font-bold uppercase tracking-wider text-amber-400 block">
+                  Payment Verification In Progress
+                </span>
+                <p className="text-xs text-slate-300 mt-0.5">
+                  Your UPI payment screenshot was submitted and is awaiting confirmation by {salon.name}.
+                  Once verified, your token position will be activated in the live queue.
+                </p>
+                {searchResult?.appointment?.payment_screenshot_url && (
+                  <a
+                    href={searchResult.appointment.payment_screenshot_url}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="inline-block text-[11px] text-amber-400 underline mt-1.5 font-medium"
+                  >
+                    View Uploaded Receipt Screenshot ↗
+                  </a>
+                )}
+              </div>
+            </div>
+          )}
 
           {/* Stepper Progress Bar */}
           <div className="py-2">

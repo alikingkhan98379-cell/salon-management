@@ -16,6 +16,9 @@ import { CustomerCRM } from './components/CustomerCRM';
 import { InvoiceGenerator } from './components/InvoiceGenerator';
 import { AnalyticsView } from './components/AnalyticsView';
 import { SuperAdminConsole } from './components/SuperAdminConsole';
+import { RegisterSalonScreen } from './components/RegisterSalonScreen';
+import { SubscriptionExpiredGate } from './components/SubscriptionExpiredGate';
+import { PaymentVerificationManager } from './components/PaymentVerificationManager';
 import { salonDataService, REGISTERED_SALONS } from './lib/salonDataService';
 import { salonStore } from './lib/mockStore';
 import { supabase } from './lib/supabaseClient';
@@ -76,44 +79,75 @@ export function App() {
     return unsubscribe;
   }, []);
 
-  const handleAuthenticatedUser = (user: { id: string; email?: string; user_metadata?: { full_name?: string } }) => {
-    // Check if this email matches seed profiles or default to salon_owner
+  const handleAuthenticatedUser = async (user: { id: string; email?: string; user_metadata?: { full_name?: string } }) => {
     const email = user.email || '';
-    let role: UserRole = 'salon_owner';
     let name = user.user_metadata?.full_name || email.split('@')[0] || 'Salon User';
-    let ownedSalonIds = [REGISTERED_SALONS[0].id];
-    let assignedSalonId: string | undefined;
 
-    if (email.includes('admin')) {
-      role = 'super_admin';
-    } else if (email.includes('kabir')) {
-      role = 'salon_owner';
-      name = 'Kabir Khan';
-      ownedSalonIds = [REGISTERED_SALONS[0].id, REGISTERED_SALONS[1].id];
-    } else if (email.includes('rishi')) {
-      role = 'salon_owner';
-      name = 'Rishi Mehra';
-      ownedSalonIds = [REGISTERED_SALONS[1].id];
-    } else if (email.includes('farhan')) {
-      role = 'staff';
-      name = 'Farhan Akhtar';
-      assignedSalonId = REGISTERED_SALONS[0].id;
-    } else if (email.includes('aman')) {
-      role = 'manager';
-      name = 'Aman Sharma';
-      assignedSalonId = REGISTERED_SALONS[0].id;
+    // 1. Server-side check: Super Admin
+    const isSuperAdmin = await salonDataService.checkIsSuperAdmin(email);
+    if (isSuperAdmin) {
+      return resolveSalonForUser({
+        id: user.id,
+        email,
+        name: name || 'Platform Super Admin',
+        role: 'super_admin'
+      });
     }
 
-    const authUser: AuthUser = {
+    // 2. Demo shortcuts for offline / testing convenience
+    if (email === 'kabir@westernboys.com') {
+      return resolveSalonForUser({
+        id: user.id,
+        email,
+        name: 'Kabir Khan',
+        role: 'salon_owner',
+        ownedSalonIds: [REGISTERED_SALONS[0].id, REGISTERED_SALONS[1].id]
+      });
+    }
+    if (email === 'rishi@westernboys.com') {
+      return resolveSalonForUser({
+        id: user.id,
+        email,
+        name: 'Rishi Mehra',
+        role: 'salon_owner',
+        ownedSalonIds: [REGISTERED_SALONS[1].id]
+      });
+    }
+    if (email === 'farhan@westernboys.com') {
+      return resolveSalonForUser({
+        id: user.id,
+        email,
+        name: 'Farhan Akhtar',
+        role: 'staff',
+        assignedSalonId: REGISTERED_SALONS[0].id
+      });
+    }
+    if (email === 'aman@westernboys.com') {
+      return resolveSalonForUser({
+        id: user.id,
+        email,
+        name: 'Aman Sharma',
+        role: 'manager',
+        assignedSalonId: REGISTERED_SALONS[0].id
+      });
+    }
+
+    // 3. For any other real Google account or email login:
+    // Query their owned salons from database.
+    // They NEVER automatically inherit Jaipur salon!
+    const tempUser: AuthUser = {
       id: user.id,
       email,
       name,
-      role,
-      ownedSalonIds,
-      assignedSalonId
+      role: 'salon_owner',
+      ownedSalonIds: []
     };
 
-    resolveSalonForUser(authUser);
+    const owned = await salonDataService.fetchUserSalons(tempUser);
+    if (owned.length > 0) {
+      tempUser.ownedSalonIds = owned.map(s => s.id);
+    }
+    resolveSalonForUser(tempUser);
   };
 
   const resolveSalonForUser = async (user: AuthUser) => {
@@ -142,20 +176,21 @@ export function App() {
       const owned = await salonDataService.fetchUserSalons(user);
       setUserSalons(owned);
 
+      if (owned.length === 0) {
+        // Unregistered Owner: Must register their salon first!
+        setSelectedSalon(null);
+        setIsPickerActive(false);
+        return;
+      }
+
       if (owned.length > 1) {
         // Multi-Salon Owner: MUST show Salon Picker first!
         setIsPickerActive(true);
         setSelectedSalon(null);
-      } else if (owned.length === 1) {
+      } else {
         // Single Salon Owner: bypass picker directly to dashboard
         setSelectedSalon(owned[0]);
         salonDataService.setActiveSalonId(owned[0].id);
-        setIsPickerActive(false);
-        setActiveTab('dashboard');
-      } else {
-        // 0 salons fallback to default
-        setSelectedSalon(REGISTERED_SALONS[0]);
-        salonDataService.setActiveSalonId(REGISTERED_SALONS[0].id);
         setIsPickerActive(false);
         setActiveTab('dashboard');
       }
@@ -231,6 +266,30 @@ export function App() {
   }
 
   // ---------------------------------------------------------------------------
+  // SALON ONBOARDING GATE: Unregistered owner routes to Register Your Salon
+  // ---------------------------------------------------------------------------
+  if (currentUser.role === 'salon_owner' && userSalons.length === 0) {
+    return (
+      <RegisterSalonScreen
+        owner={{
+          id: currentUser.id,
+          email: currentUser.email,
+          name: currentUser.name,
+          phone: currentUser.phone
+        }}
+        onSalonRegistered={(newSalon) => {
+          setUserSalons([newSalon]);
+          setSelectedSalon(newSalon);
+          salonDataService.setActiveSalonId(newSalon.id);
+          setIsPickerActive(false);
+          setActiveTab('dashboard');
+        }}
+        onLogout={handleLogout}
+      />
+    );
+  }
+
+  // ---------------------------------------------------------------------------
   // MULTI-SALON OWNER PICKER GATE: If owner has > 1 salon and picker is active
   // ---------------------------------------------------------------------------
   if (isPickerActive && currentUser.role === 'salon_owner') {
@@ -246,9 +305,28 @@ export function App() {
   }
 
   const activeSalon = selectedSalon || salonDataService.getActiveSalon();
+
+  // ---------------------------------------------------------------------------
+  // SUBSCRIPTION EXPIRED GATE: Salons with expired subscription gated for owner
+  // ---------------------------------------------------------------------------
+  if (currentUser.role === 'salon_owner' && activeSalon && activeSalon.subscription_status === 'expired') {
+    return (
+      <SubscriptionExpiredGate
+        salon={activeSalon}
+        ownerEmail={currentUser.email}
+        onSubscriptionRenewed={(updatedSalon) => {
+          setSelectedSalon(updatedSalon);
+          setUserSalons(prev => prev.map(s => s.id === updatedSalon.id ? updatedSalon : s));
+        }}
+        onLogout={handleLogout}
+      />
+    );
+  }
+
   const currentlyServing = salonStore.getCurrentlyServingToken();
   const waitingTokens = salonStore.getWaitingTokens();
   const isMultiSalonOwner = currentUser.role === 'salon_owner' && (userSalons.length > 1 || (currentUser.ownedSalonIds?.length || 0) > 1);
+  const pendingVerificationsCount = activeSalon ? salonDataService.getPendingVerifications(activeSalon.id).length : 0;
 
   // Reception TV Display Mode
   if (activeTab === 'display') {
@@ -270,6 +348,7 @@ export function App() {
         activeSalon={activeSalon}
         currentServingToken={currentlyServing ? currentlyServing.token_code : undefined}
         waitingCount={waitingTokens.length}
+        pendingVerificationsCount={pendingVerificationsCount}
       />
 
       {/* Main Content Area */}
@@ -319,6 +398,9 @@ export function App() {
         )}
         {activeTab === 'whatsapp' && <WhatsAppSimulator />}
         {activeTab === 'staff' && <StaffPortal />}
+        {activeTab === 'verifications' && (
+          <PaymentVerificationManager salonId={activeSalon.id} salonName={activeSalon.name} />
+        )}
         {activeTab === 'services' && <ServicesManager />}
         {activeTab === 'inventory' && <InventoryManager />}
         {activeTab === 'customers' && <CustomerCRM />}

@@ -25,13 +25,22 @@ export interface Salon {
   address: string;
   city: string;
   state: string;
+  pincode?: string;
+  latitude?: number;
+  longitude?: number;
   logo_url?: string;
   currency: string;
   currency_symbol: string;
+  upi_id?: string;
+  upi_qr_url?: string;
+  owner_name?: string;
+  owner_email?: string;
   subscription_plan: SubscriptionPlanType;
   billing_cycle: 'monthly' | '6_months' | '1_year';
   subscription_status: SubscriptionStatusType;
+  trial_ends_at?: string;
   subscription_expires_at?: string;
+  distance_km?: number;
   created_at: string;
 }
 
@@ -121,6 +130,10 @@ export interface Appointment {
   amount: number;
   payment_status: PaymentStatus;
   payment_gateway: PaymentGateway;
+  payment_screenshot_url?: string;
+  payment_verified_at?: string;
+  payment_verified_by?: string;
+  rejection_reason?: string;
   transaction_ref?: string;
   notes?: string;
   home_service_address?: string;
@@ -132,16 +145,19 @@ export interface Appointment {
 export interface Token {
   id: string;
   salon_id: string;
+  salon_name?: string;
   appointment_id: string;
+  stylist_id?: string;
+  staff_name?: string;
   token_number: number;
   token_code: string; // e.g. 'WBS-01'
   customer_name: string;
   service_name: string;
-  staff_name?: string;
   service_type: ServiceLocation;
   queue_date: string;
   status: TokenStatus;
   estimated_wait_minutes: number;
+  is_verified?: boolean;
   called_at?: string;
   started_at?: string;
   completed_at?: string;
@@ -190,4 +206,23 @@ export interface NotificationLog {
   message_content: string;
   status: 'pending' | 'sent' | 'delivered' | 'failed';
   created_at: string;
+}
+
+export interface AdminAuditLog {
+  id: string;
+  admin_email: string;
+  action: string;
+  target_salon_id?: string;
+  target_salon_name?: string;
+  details?: Record<string, any>;
+  created_at: string;
+}
+
+export interface LocationSuggestion {
+  display_name: string;
+  city: string;
+  state: string;
+  pincode: string;
+  lat: number;
+  lon: number;
 }
