@@ -7,20 +7,45 @@ import {
   Play, 
   Car, 
   Scissors, 
-  AlertCircle,
-  Star,
-  Lock,
-  Edit3,
-  Save,
-  MessageSquare
+  AlertCircle, 
+  Star, 
+  Lock, 
+  Edit3, 
+  Save, 
+  MessageSquare,
+  TrendingUp,
+  Percent,
+  Calendar,
+  Sparkles
 } from 'lucide-react';
 import { salonStore } from '../lib/mockStore';
 import { salonDataService } from '../lib/salonDataService';
-import { Appointment } from '../types';
+import { Appointment, UserRole } from '../types';
 
-export const StaffPortal: React.FC = () => {
+interface StaffPortalProps {
+  currentUser?: {
+    id: string;
+    email?: string;
+    role?: UserRole;
+    name?: string;
+    assignedSalonId?: string;
+  } | null;
+}
+
+export const StaffPortal: React.FC<StaffPortalProps> = ({ currentUser }) => {
   const staffMembers = salonStore.getStaff();
-  const [selectedStaffId, setSelectedStaffId] = useState<string>(staffMembers[0]?.id || '');
+  
+  // If user is logged in as staff, lock to their profile
+  const userMatchedStaff = currentUser?.role === 'staff'
+    ? staffMembers.find(s => 
+        (currentUser.email && s.email && s.email.toLowerCase() === currentUser.email.toLowerCase()) ||
+        s.id === currentUser.id
+      )
+    : null;
+
+  const [selectedStaffId, setSelectedStaffId] = useState<string>(
+    userMatchedStaff?.id || staffMembers[0]?.id || ''
+  );
   
   // Note editing state for completed visits
   const [editingApptId, setEditingApptId] = useState<string | null>(null);
@@ -28,10 +53,17 @@ export const StaffPortal: React.FC = () => {
   const [behaviorNote, setBehaviorNote] = useState('');
 
   const appointments = salonStore.getAppointments();
-  const currentStaff = staffMembers.find(s => s.id === selectedStaffId) || staffMembers[0];
+  const currentStaff = userMatchedStaff || staffMembers.find(s => s.id === selectedStaffId) || staffMembers[0];
 
   // RLS Staff Scoping: only show appointments where staff_id matches current staff
   const staffAppointments = appointments.filter(a => a.staff_id === currentStaff?.id);
+
+  // Performance metrics for current stylist
+  const completedAppointments = staffAppointments.filter(a => a.status === 'completed');
+  const servingAppointment = staffAppointments.find(a => a.status === 'serving');
+  const commissionRate = currentStaff?.commission_rate || 15;
+  const completedRevenue = completedAppointments.reduce((sum, a) => sum + (Number(a.amount) || 0), 0);
+  const estimatedCommission = Math.round((completedRevenue * commissionRate) / 100);
 
   const handleStartService = (appt: Appointment) => {
     appt.status = 'serving';
@@ -74,47 +106,89 @@ export const StaffPortal: React.FC = () => {
     if (tok) salonStore.skipToken(tok.id);
   };
 
+  const isStaffRole = currentUser?.role === 'staff';
+
   return (
     <div className="max-w-3xl mx-auto space-y-6">
       
-      {/* Barber Identity & Privacy Shield Banner */}
-      <div className="bg-slate-900 border border-slate-800 rounded-3xl p-6 shadow-xl">
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+      {/* Barber Identity & Performance Banner */}
+      <div className="bg-slate-900 border border-slate-800 rounded-3xl p-6 shadow-xl relative overflow-hidden">
+        <div className="absolute -right-10 -top-10 w-40 h-40 bg-amber-500/10 rounded-full blur-3xl pointer-events-none" />
+
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 relative z-10">
           <div className="flex items-center space-x-4">
-            <div className="w-16 h-16 rounded-2xl bg-gradient-to-br from-amber-400 to-amber-600 text-slate-950 flex items-center justify-center font-bold text-2xl shadow-lg">
+            <div className="w-16 h-16 rounded-2xl bg-gradient-to-br from-amber-400 to-amber-600 text-slate-950 flex items-center justify-center font-bold text-2xl shadow-lg shadow-amber-500/20 border border-amber-400/40">
               {currentStaff?.full_name ? currentStaff.full_name[0] : 'S'}
             </div>
             <div>
               <div className="flex items-center space-x-2">
                 <h2 className="text-xl font-bold font-serif text-white">{currentStaff?.full_name}</h2>
                 <span className="flex items-center text-xs font-mono font-bold text-amber-400 bg-amber-500/10 px-2 py-0.5 rounded border border-amber-500/20">
-                  <Star className="w-3 h-3 fill-amber-400 mr-1" /> {currentStaff?.rating}
+                  <Star className="w-3 h-3 fill-amber-400 mr-1" /> {currentStaff?.rating || 5.0}
                 </span>
+                {isStaffRole && (
+                  <span className="text-[10px] bg-emerald-500/15 text-emerald-400 border border-emerald-500/30 px-2 py-0.5 rounded-full font-bold">
+                    My Chair
+                  </span>
+                )}
               </div>
               <p className="text-xs text-slate-400 mt-0.5">
-                Specialties: <span className="text-slate-200">{currentStaff?.specialties.join(', ')}</span>
+                Specialties: <span className="text-slate-200">{currentStaff?.specialties.join(', ') || 'Stylist'}</span>
               </p>
               <div className="flex items-center space-x-1.5 mt-1.5 text-[11px] text-slate-400">
                 <Lock className="w-3 h-3 text-emerald-400" />
-                <span>Staff RLS View: Financials &amp; salon-wide revenues hidden</span>
+                <span>
+                  {isStaffRole 
+                    ? 'Staff Scoped Portal: Personal queue & performance' 
+                    : 'Management Station View: Viewing Barber Station'}
+                </span>
               </div>
             </div>
           </div>
 
-          {/* Barber Switcher dropdown to simulate different barbers */}
-          <div className="flex items-center space-x-2">
-            <span className="text-xs text-slate-400 font-semibold">Switch Barber:</span>
-            <select
-              value={selectedStaffId}
-              onChange={(e) => setSelectedStaffId(e.target.value)}
-              className="bg-slate-800 border border-slate-700 text-xs font-semibold text-amber-400 rounded-xl px-3 py-2 focus:outline-none focus:border-amber-400 cursor-pointer"
-            >
-              {staffMembers.map(st => (
-                <option key={st.id} value={st.id}>{st.full_name} ({st.specialties[0]})</option>
-              ))}
-            </select>
+          {/* If Owner/Manager: show Barber Switcher dropdown; if Staff: hide switcher */}
+          {!isStaffRole ? (
+            <div className="flex items-center space-x-2">
+              <span className="text-xs text-slate-400 font-semibold">Switch Chair:</span>
+              <select
+                value={selectedStaffId}
+                onChange={(e) => setSelectedStaffId(e.target.value)}
+                className="bg-slate-800 border border-slate-700 text-xs font-semibold text-amber-400 rounded-xl px-3 py-2 focus:outline-none focus:border-amber-400 cursor-pointer"
+              >
+                {staffMembers.map(st => (
+                  <option key={st.id} value={st.id}>{st.full_name} ({st.specialties[0] || 'Stylist'})</option>
+                ))}
+              </select>
+            </div>
+          ) : (
+            <div className="bg-slate-950/80 border border-slate-800 px-3.5 py-2 rounded-2xl flex items-center space-x-2">
+              <Sparkles className="w-4 h-4 text-amber-400" />
+              <div className="text-right">
+                <p className="text-[10px] text-slate-400 uppercase font-mono">Commission Rate</p>
+                <p className="text-sm font-bold text-amber-400 font-mono">{commissionRate}%</p>
+              </div>
+            </div>
+          )}
+        </div>
+
+        {/* Personal Performance Dashboard Metrics */}
+        <div className="mt-5 pt-4 border-t border-slate-800/80 grid grid-cols-3 gap-3 text-center">
+          <div className="bg-slate-950/60 p-2.5 rounded-xl border border-slate-800/60">
+            <span className="text-[10px] text-slate-400 uppercase font-mono block">Today's Clients</span>
+            <span className="text-lg font-bold text-white font-mono">{staffAppointments.length}</span>
+          </div>
+
+          <div className="bg-slate-950/60 p-2.5 rounded-xl border border-slate-800/60">
+            <span className="text-[10px] text-slate-400 uppercase font-mono block">Clients Served</span>
+            <span className="text-lg font-bold text-emerald-400 font-mono">{completedAppointments.length}</span>
+          </div>
+
+          <div className="bg-slate-950/60 p-2.5 rounded-xl border border-slate-800/60">
+            <span className="text-[10px] text-slate-400 uppercase font-mono block">Est. Earnings</span>
+            <span className="text-lg font-bold text-amber-400 font-mono">₹{estimatedCommission}</span>
           </div>
         </div>
+
       </div>
 
       {/* Today's Barber Schedule */}

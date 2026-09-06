@@ -303,6 +303,18 @@ class SalonDataService {
       invoices: [],
       staff: [
         {
+          id: '55555555-5555-5555-5555-555555555555',
+          salon_id: REGISTERED_SALONS[0].id,
+          role: 'manager',
+          full_name: 'Aman Sharma',
+          phone: '+91 98765 00005',
+          email: 'aman@westernboyssalon.com',
+          specialties: ['Operations', 'VIP Styling'],
+          rating: 5.0,
+          commission_rate: 25,
+          is_active: true,
+        },
+        {
           id: '33333333-3333-3333-3333-333333333333',
           salon_id: REGISTERED_SALONS[0].id,
           role: 'staff',
@@ -1181,6 +1193,392 @@ class SalonDataService {
 
   public getStaff(salonId?: string): Profile[] {
     return this.getStore(salonId).staff;
+  }
+
+  public persistTenantDataLocally(salonId: string) {
+    try {
+      if (typeof window === 'undefined' || !window.localStorage) return;
+      const store = this.tenantData.get(salonId);
+      if (store) {
+        localStorage.setItem('wbs_tenant_data_' + salonId, JSON.stringify(store));
+      }
+    } catch (e) {
+      console.warn('Could not persist tenant data locally:', e);
+    }
+  }
+
+  public async getTeamMembers(salonId?: string): Promise<Profile[]> {
+    const id = salonId || this.activeSalonId;
+    if (supabase) {
+      try {
+        const { data, error } = await supabase
+          .from('profiles')
+          .select('*')
+          .eq('salon_id', id)
+          .order('created_at', { ascending: true });
+        if (!error && data && data.length > 0) {
+          const store = this.getStore(id);
+          data.forEach((remote: any) => {
+            const idx = store.staff.findIndex(s => s.id === remote.id || (remote.email && s.email && s.email.toLowerCase() === remote.email.toLowerCase()));
+            const mapped: Profile = {
+              id: remote.id,
+              salon_id: remote.salon_id,
+              role: remote.role,
+              full_name: remote.full_name,
+              phone: remote.phone,
+              email: remote.email || undefined,
+              avatar_url: remote.avatar_url || undefined,
+              specialties: Array.isArray(remote.specialties) ? remote.specialties : ['Haircut'],
+              rating: Number(remote.rating) || 5.0,
+              commission_rate: Number(remote.commission_rate) || 15,
+              is_active: remote.is_active !== false
+            };
+            if (idx >= 0) {
+              store.staff[idx] = mapped;
+            } else {
+              store.staff.push(mapped);
+            }
+          });
+          return [...store.staff];
+        }
+      } catch (err) {
+        console.warn('Supabase getTeamMembers error, using local store:', err);
+      }
+    }
+    return [...this.getStore(id).staff];
+  }
+
+  public async addTeamMember(params: {
+    salonId: string;
+    fullName: string;
+    phone: string;
+    email?: string;
+    role: 'manager' | 'staff';
+    specialties?: string[];
+    commissionRate?: number;
+    actorEmail: string;
+    actorRole: UserRole;
+  }): Promise<{ success: boolean; error?: string; profile?: Profile }> {
+    // 1. Role-based permission verification
+    if (params.actorRole === 'manager' && params.role !== 'staff') {
+      return { success: false, error: 'Managers are only permitted to add Staff members, not other Managers.' };
+    }
+    if (params.actorRole !== 'salon_owner' && params.actorRole !== 'manager' && params.actorRole !== 'super_admin') {
+      return { success: false, error: 'Unauthorized: Only salon owners and managers can add team members.' };
+    }
+
+    // 2. Name validation
+    if (!params.fullName || params.fullName.trim().length < 2) {
+      return { success: false, error: 'Please enter a valid full name (at least 2 characters).' };
+    }
+
+    // 3. Phone validation
+    const rawPhone = params.phone.trim();
+    const digitsOnly = rawPhone.replace(/\D/g, '');
+    if (digitsOnly.length < 10) {
+      return { success: false, error: 'Please enter a valid 10-digit mobile phone number.' };
+    }
+    const standardPhone = rawPhone.startsWith('+') ? rawPhone : (digitsOnly.length === 10 ? `+91 ${digitsOnly}` : `+${digitsOnly}`);
+
+    // 4. Email validation (crucial for Email OTP login)
+    const cleanEmail = params.email ? params.email.trim().toLowerCase() : undefined;
+    if (cleanEmail) {
+      const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+      if (!emailRegex.test(cleanEmail)) {
+        return { success: false, error: 'Please enter a valid email address for staff login.' };
+      }
+    }
+
+    // 5. Duplicate check per salon (enforce unique phone & email within same salon)
+    const store = this.getStore(params.salonId);
+    const existing = store.staff.find(s => {
+      const sDigits = (s.phone || '').replace(/\D/g, '');
+      const phoneMatch = sDigits.length >= 10 && digitsOnly.endsWith(sDigits.slice(-10));
+      const emailMatch = cleanEmail && s.email && s.email.trim().toLowerCase() === cleanEmail;
+      return phoneMatch || emailMatch;
+    });
+
+    if (existing) {
+      const isEmailDup = cleanEmail && existing.email && existing.email.trim().toLowerCase() === cleanEmail;
+      return {
+        success: false,
+        error: isEmailDup 
+          ? `A team member with email "${cleanEmail}" already exists in this salon (${existing.full_name}).`
+          : `A team member with this mobile number already exists in this salon (${existing.full_name}).`
+      };
+    }
+
+    // 6. Create Profile object
+    const newProfile: Profile = {
+      id: generateUUID(),
+      salon_id: params.salonId,
+      role: params.role,
+      full_name: params.fullName.trim(),
+      phone: standardPhone,
+      email: cleanEmail,
+      specialties: params.specialties && params.specialties.length > 0 ? params.specialties : ['Haircut', 'Beard Sculpting'],
+      rating: 5.0,
+      commission_rate: params.commissionRate !== undefined ? Number(params.commissionRate) : (params.role === 'manager' ? 25 : 15),
+      is_active: true
+    };
+
+    // Save to local tenant store
+    store.staff.push(newProfile);
+    this.persistTenantDataLocally(params.salonId);
+
+    // Save to Supabase
+    if (supabase) {
+      try {
+        await supabase.from('profiles').insert({
+          id: newProfile.id,
+          salon_id: newProfile.salon_id,
+          role: newProfile.role,
+          full_name: newProfile.full_name,
+          phone: newProfile.phone,
+          email: newProfile.email,
+          specialties: newProfile.specialties,
+          rating: newProfile.rating,
+          commission_rate: newProfile.commission_rate,
+          is_active: true
+        });
+      } catch (err) {
+        console.warn('Supabase profile insertion fallback:', err);
+      }
+    }
+
+    // Record audit log
+    await this.logAdminAction(
+      params.actorEmail,
+      'STAFF_ADDED',
+      params.salonId,
+      {
+        member_id: newProfile.id,
+        full_name: newProfile.full_name,
+        role: newProfile.role,
+        phone: newProfile.phone,
+        email: newProfile.email,
+        added_by_role: params.actorRole
+      }
+    );
+
+    this.notify();
+    return { success: true, profile: newProfile };
+  }
+
+  public async updateTeamMember(params: {
+    memberId: string;
+    salonId: string;
+    updates: Partial<Profile>;
+    actorEmail: string;
+    actorRole: UserRole;
+  }): Promise<{ success: boolean; error?: string }> {
+    const store = this.getStore(params.salonId);
+    const target = store.staff.find(s => s.id === params.memberId);
+    if (!target) {
+      return { success: false, error: 'Team member not found.' };
+    }
+
+    // Manager restriction: Cannot update a Manager
+    if (params.actorRole === 'manager') {
+      if (target.role === 'manager') {
+        return { success: false, error: 'Managers cannot modify Manager profiles.' };
+      }
+      if (params.updates.role && params.updates.role !== 'staff') {
+        return { success: false, error: 'Managers cannot elevate a member to Manager.' };
+      }
+    }
+
+    if (params.updates.full_name) target.full_name = params.updates.full_name.trim();
+    if (params.updates.phone) target.phone = params.updates.phone.trim();
+    if (params.updates.email !== undefined) target.email = params.updates.email ? params.updates.email.trim().toLowerCase() : undefined;
+    if (params.updates.role) target.role = params.updates.role;
+    if (params.updates.specialties) target.specialties = params.updates.specialties;
+    if (params.updates.commission_rate !== undefined) target.commission_rate = Number(params.updates.commission_rate);
+    if (params.updates.is_active !== undefined) target.is_active = params.updates.is_active;
+
+    this.persistTenantDataLocally(params.salonId);
+
+    if (supabase) {
+      try {
+        await supabase.from('profiles').update({
+          full_name: target.full_name,
+          phone: target.phone,
+          email: target.email,
+          role: target.role,
+          specialties: target.specialties,
+          commission_rate: target.commission_rate,
+          is_active: target.is_active
+        }).eq('id', params.memberId);
+      } catch (err) {
+        console.warn('Supabase profile update fallback:', err);
+      }
+    }
+
+    await this.logAdminAction(
+      params.actorEmail,
+      'STAFF_UPDATED',
+      params.salonId,
+      {
+        member_id: target.id,
+        full_name: target.full_name,
+        role: target.role,
+        updated_by_role: params.actorRole
+      }
+    );
+
+    this.notify();
+    return { success: true };
+  }
+
+  public async deactivateTeamMember(params: {
+    memberId: string;
+    salonId: string;
+    actorEmail: string;
+    actorRole: UserRole;
+  }): Promise<{ success: boolean; error?: string }> {
+    const store = this.getStore(params.salonId);
+    const target = store.staff.find(s => s.id === params.memberId);
+    if (!target) {
+      return { success: false, error: 'Team member not found.' };
+    }
+
+    if (params.actorRole === 'manager' && target.role === 'manager') {
+      return { success: false, error: 'Managers cannot deactivate another Manager.' };
+    }
+
+    target.is_active = false;
+    this.persistTenantDataLocally(params.salonId);
+
+    if (supabase) {
+      try {
+        await supabase.from('profiles').update({ is_active: false }).eq('id', params.memberId);
+      } catch (err) {
+        console.warn('Supabase profile deactivation fallback:', err);
+      }
+    }
+
+    await this.logAdminAction(
+      params.actorEmail,
+      'STAFF_DEACTIVATED',
+      params.salonId,
+      {
+        member_id: target.id,
+        full_name: target.full_name,
+        role: target.role,
+        deactivated_by_role: params.actorRole
+      }
+    );
+
+    this.notify();
+    return { success: true };
+  }
+
+  public async reactivateTeamMember(params: {
+    memberId: string;
+    salonId: string;
+    actorEmail: string;
+    actorRole: UserRole;
+  }): Promise<{ success: boolean; error?: string }> {
+    const store = this.getStore(params.salonId);
+    const target = store.staff.find(s => s.id === params.memberId);
+    if (!target) {
+      return { success: false, error: 'Team member not found.' };
+    }
+
+    target.is_active = true;
+    this.persistTenantDataLocally(params.salonId);
+
+    if (supabase) {
+      try {
+        await supabase.from('profiles').update({ is_active: true }).eq('id', params.memberId);
+      } catch (err) {
+        console.warn('Supabase profile reactivate fallback:', err);
+      }
+    }
+
+    await this.logAdminAction(
+      params.actorEmail,
+      'STAFF_REACTIVATED',
+      params.salonId,
+      {
+        member_id: target.id,
+        full_name: target.full_name,
+        role: target.role,
+        reactivated_by_role: params.actorRole
+      }
+    );
+
+    this.notify();
+    return { success: true };
+  }
+
+  public async findStaffProfileByAuthUserOrEmail(user: { id?: string; email?: string; phone?: string }): Promise<{ profile: Profile; salon: Salon; isDeactivated?: boolean } | null> {
+    const cleanEmail = user.email ? user.email.trim().toLowerCase() : '';
+    const userPhone = user.phone ? user.phone.replace(/\D/g, '') : '';
+
+    // 1. Check Supabase
+    if (supabase) {
+      try {
+        let query = supabase.from('profiles').select('*, salons(*)');
+        if (user.id && isValidUUID(user.id)) {
+          if (cleanEmail) {
+            query = query.or(`auth_user_id.eq.${user.id},email.ilike.${cleanEmail}`);
+          } else {
+            query = query.eq('auth_user_id', user.id);
+          }
+        } else if (cleanEmail) {
+          query = query.ilike('email', cleanEmail);
+        }
+
+        const { data } = await query.maybeSingle();
+        if (data && data.salons) {
+          const profile: Profile = {
+            id: data.id,
+            salon_id: data.salon_id,
+            role: data.role,
+            full_name: data.full_name,
+            phone: data.phone,
+            email: data.email || undefined,
+            avatar_url: data.avatar_url || undefined,
+            specialties: Array.isArray(data.specialties) ? data.specialties : ['Haircut'],
+            rating: Number(data.rating) || 5.0,
+            commission_rate: Number(data.commission_rate) || 15,
+            is_active: data.is_active !== false
+          };
+          const salon = data.salons as unknown as Salon;
+
+          if (!profile.is_active) {
+            return { profile, salon, isDeactivated: true };
+          }
+
+          // Link auth_user_id if not linked
+          if (user.id && isValidUUID(user.id) && data.auth_user_id !== user.id) {
+            await supabase.from('profiles').update({ auth_user_id: user.id }).eq('id', data.id);
+          }
+          return { profile, salon };
+        }
+      } catch (err) {
+        console.warn('findStaffProfileByAuthUserOrEmail Supabase fallback:', err);
+      }
+    }
+
+    // 2. Check local stores across all cached salons
+    for (const salon of this.allSalonsCache) {
+      const store = this.getStore(salon.id);
+      const matched = store.staff.find(s => {
+        if (cleanEmail && s.email && s.email.trim().toLowerCase() === cleanEmail) return true;
+        if (userPhone && s.phone && s.phone.replace(/\D/g, '').endsWith(userPhone.slice(-10))) return true;
+        return false;
+      });
+      if (matched) {
+        if (!matched.is_active) {
+          return { profile: matched, salon, isDeactivated: true };
+        }
+        return { profile: matched, salon };
+      }
+    }
+
+    return null;
   }
 
   public getAppointments(salonId?: string): Appointment[] {

@@ -155,9 +155,18 @@ export const Navbar: React.FC<NavbarProps> = ({
         {/* Navigation Tabs based on Current Authenticated Role */}
         <nav className="flex space-x-1 overflow-x-auto py-2 border-t border-slate-800/60 no-scrollbar">
           
-          {/* Dashboard (Owner, Manager, Super Admin) */}
-          {currentRole !== 'staff' && (
+          {/* STAFF ONLY VIEW: strictly isolated to their personal schedule & chair */}
+          {currentRole === 'staff' ? (
+            <button
+              onClick={() => onTabChange('staff')}
+              className={`flex items-center space-x-1.5 px-3.5 py-1.5 rounded-lg text-xs font-bold transition-all whitespace-nowrap bg-amber-500/20 text-amber-400 border border-amber-500/40 shadow-sm`}
+            >
+              <UserCheck className="w-3.5 h-3.5" />
+              <span>My Schedule &amp; Chair</span>
+            </button>
+          ) : (
             <>
+              {/* Dashboard (Owner, Manager, Super Admin) */}
               <button
                 onClick={() => onTabChange('dashboard')}
                 className={`flex items-center space-x-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all whitespace-nowrap ${
@@ -181,158 +190,181 @@ export const Navbar: React.FC<NavbarProps> = ({
                 <Clock className="w-3.5 h-3.5" />
                 <span>Live Tokens</span>
               </button>
+
+              {/* Manage Staff Screen (Salon Owner & Manager) */}
+              {(currentRole === 'salon_owner' || currentRole === 'manager') && (
+                <button
+                  onClick={() => onTabChange('manage_staff')}
+                  className={`flex items-center space-x-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all whitespace-nowrap ${
+                    activeTab === 'manage_staff'
+                      ? 'bg-amber-500/15 text-amber-400 border border-amber-500/30 shadow-sm'
+                      : 'text-slate-400 hover:text-white hover:bg-slate-800/50'
+                  }`}
+                >
+                  <Users className="w-3.5 h-3.5 text-amber-400" />
+                  <span>Manage Staff</span>
+                </button>
+              )}
+
+              {/* Verify Payments (Owner & Manager) */}
+              {(currentRole === 'salon_owner' || currentRole === 'manager') && (
+                <button
+                  onClick={() => onTabChange('verifications')}
+                  className={`flex items-center space-x-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all whitespace-nowrap ${
+                    activeTab === 'verifications'
+                      ? 'bg-amber-500/15 text-amber-400 border border-amber-500/30 shadow-sm'
+                      : 'text-slate-400 hover:text-white hover:bg-slate-800/50'
+                  }`}
+                >
+                  <ShieldCheck className="w-3.5 h-3.5 text-emerald-400" />
+                  <span>Verify Payments</span>
+                  {pendingVerificationsCount !== undefined && pendingVerificationsCount > 0 && (
+                    <span className="ml-1 px-1.5 py-0.2 rounded-full bg-rose-500 text-white font-mono text-[10px] font-bold animate-pulse">
+                      {pendingVerificationsCount}
+                    </span>
+                  )}
+                </button>
+              )}
+
+              {/* Services & Dual Pricing (Owner & Manager) */}
+              {(currentRole === 'salon_owner' || currentRole === 'manager') && (
+                <button
+                  onClick={() => onTabChange('services')}
+                  className={`flex items-center space-x-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all whitespace-nowrap ${
+                    activeTab === 'services'
+                      ? 'bg-amber-500/15 text-amber-400 border border-amber-500/30 shadow-sm'
+                      : 'text-slate-400 hover:text-white hover:bg-slate-800/50'
+                  }`}
+                >
+                  <Layers className="w-3.5 h-3.5" />
+                  <span>Services &amp; Dual Pricing</span>
+                </button>
+              )}
+
+              {/* Inventory (Owner & Manager) */}
+              {(currentRole === 'salon_owner' || currentRole === 'manager') && (
+                <button
+                  onClick={() => onTabChange('inventory')}
+                  className={`flex items-center space-x-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all whitespace-nowrap ${
+                    activeTab === 'inventory'
+                      ? 'bg-amber-500/15 text-amber-400 border border-amber-500/30 shadow-sm'
+                      : 'text-slate-400 hover:text-white hover:bg-slate-800/50'
+                  }`}
+                >
+                  <Package className="w-3.5 h-3.5" />
+                  <span>Inventory Alerts</span>
+                </button>
+              )}
+
+              {/* Customer CRM (Owner & Manager) */}
+              {(currentRole === 'salon_owner' || currentRole === 'manager') && (
+                <button
+                  onClick={() => onTabChange('customers')}
+                  className={`flex items-center space-x-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all whitespace-nowrap ${
+                    activeTab === 'customers'
+                      ? 'bg-amber-500/15 text-amber-400 border border-amber-500/30 shadow-sm'
+                      : 'text-slate-400 hover:text-white hover:bg-slate-800/50'
+                  }`}
+                >
+                  <Users className="w-3.5 h-3.5" />
+                  <span>Customer CRM</span>
+                </button>
+              )}
+
+              {/* Invoices (Owner & Manager) */}
+              {(currentRole === 'salon_owner' || currentRole === 'manager') && (
+                <button
+                  onClick={() => onTabChange('invoices')}
+                  className={`flex items-center space-x-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all whitespace-nowrap ${
+                    activeTab === 'invoices'
+                      ? 'bg-amber-500/15 text-amber-400 border border-amber-500/30 shadow-sm'
+                      : 'text-slate-400 hover:text-white hover:bg-slate-800/50'
+                  }`}
+                >
+                  <FileText className="w-3.5 h-3.5" />
+                  <span>GST Invoices</span>
+                </button>
+              )}
+
+              {/* Barber Portal chair inspection view */}
+              {(currentRole === 'salon_owner' || currentRole === 'manager') && (
+                <button
+                  onClick={() => onTabChange('staff')}
+                  className={`flex items-center space-x-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all whitespace-nowrap ${
+                    activeTab === 'staff'
+                      ? 'bg-amber-500/15 text-amber-400 border border-amber-500/30 shadow-sm'
+                      : 'text-slate-400 hover:text-white hover:bg-slate-800/50'
+                  }`}
+                >
+                  <UserCheck className="w-3.5 h-3.5" />
+                  <span>Barber Stations</span>
+                </button>
+              )}
+
+              {/* Owner only Analytics */}
+              {currentRole === 'salon_owner' && (
+                <button
+                  onClick={() => onTabChange('analytics')}
+                  className={`flex items-center space-x-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all whitespace-nowrap ${
+                    activeTab === 'analytics'
+                      ? 'bg-amber-500/15 text-amber-400 border border-amber-500/30 shadow-sm'
+                      : 'text-slate-400 hover:text-white hover:bg-slate-800/50'
+                  }`}
+                >
+                  <BarChart3 className="w-3.5 h-3.5" />
+                  <span>Owner Analytics</span>
+                </button>
+              )}
+
+              {/* Customer / Self-Service Tabs */}
+              <button
+                onClick={() => onTabChange('marketplace')}
+                className={`flex items-center space-x-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all whitespace-nowrap ${
+                  activeTab === 'marketplace'
+                    ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 shadow-sm font-bold'
+                    : 'text-emerald-400 hover:text-emerald-300 hover:bg-emerald-950/30'
+                }`}
+              >
+                <ShoppingBag className="w-3.5 h-3.5" />
+                <span>Customer Marketplace</span>
+              </button>
+
+              <button
+                onClick={() => onTabChange('book')}
+                className={`flex items-center space-x-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all whitespace-nowrap ${
+                  activeTab === 'book'
+                    ? 'bg-amber-500/15 text-amber-400 border border-amber-500/30 shadow-sm'
+                    : 'text-slate-400 hover:text-white hover:bg-slate-800/50'
+                }`}
+              >
+                <Scissors className="w-3.5 h-3.5 text-amber-400" />
+                <span>Book Online</span>
+              </button>
+
+              <button
+                onClick={() => onTabChange('track')}
+                className={`flex items-center space-x-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all whitespace-nowrap ${
+                  activeTab === 'track'
+                    ? 'bg-amber-500/15 text-amber-400 border border-amber-500/30 shadow-sm'
+                    : 'text-slate-400 hover:text-white hover:bg-slate-800/50'
+                }`}
+              >
+                <Bell className="w-3.5 h-3.5" />
+                <span>Check Token</span>
+              </button>
+
+              <button
+                onClick={() => onTabChange('whatsapp')}
+                className={`flex items-center space-x-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all whitespace-nowrap ${
+                  activeTab === 'whatsapp'
+                    ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/40 shadow-sm'
+                    : 'text-emerald-400/80 hover:text-emerald-300 hover:bg-emerald-950/30'
+                }`}
+              >
+                <MessageSquare className="w-3.5 h-3.5" />
+                <span>WhatsApp Bot</span>
+              </button>
             </>
-          )}
-
-          {/* Customer / Self-Service Tabs */}
-          <button
-            onClick={() => onTabChange('book')}
-            className={`flex items-center space-x-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all whitespace-nowrap ${
-              activeTab === 'book'
-                ? 'bg-amber-500/15 text-amber-400 border border-amber-500/30 shadow-sm'
-                : 'text-slate-400 hover:text-white hover:bg-slate-800/50'
-            }`}
-          >
-            <Scissors className="w-3.5 h-3.5 text-amber-400" />
-            <span>Book Online (In-Salon / Home)</span>
-          </button>
-
-          <button
-            onClick={() => onTabChange('track')}
-            className={`flex items-center space-x-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all whitespace-nowrap ${
-              activeTab === 'track'
-                ? 'bg-amber-500/15 text-amber-400 border border-amber-500/30 shadow-sm'
-                : 'text-slate-400 hover:text-white hover:bg-slate-800/50'
-            }`}
-          >
-            <Bell className="w-3.5 h-3.5" />
-            <span>Check My Token</span>
-          </button>
-
-          {/* Customer Marketplace View */}
-          <button
-            onClick={() => onTabChange('marketplace')}
-            className={`flex items-center space-x-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all whitespace-nowrap ${
-              activeTab === 'marketplace'
-                ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 shadow-sm font-bold'
-                : 'text-emerald-400 hover:text-emerald-300 hover:bg-emerald-950/30'
-            }`}
-          >
-            <ShoppingBag className="w-3.5 h-3.5" />
-            <span>Customer Marketplace</span>
-          </button>
-
-          {/* WhatsApp Bot Simulator */}
-          <button
-            onClick={() => onTabChange('whatsapp')}
-            className={`flex items-center space-x-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all whitespace-nowrap ${
-              activeTab === 'whatsapp'
-                ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/40 shadow-sm'
-                : 'text-emerald-400/80 hover:text-emerald-300 hover:bg-emerald-950/30'
-            }`}
-          >
-            <MessageSquare className="w-3.5 h-3.5" />
-            <span>WhatsApp Bot Simulator</span>
-          </button>
-
-          {/* Staff specific tab */}
-          {(currentRole === 'staff' || currentRole === 'salon_owner' || currentRole === 'manager') && (
-            <button
-              onClick={() => onTabChange('staff')}
-              className={`flex items-center space-x-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all whitespace-nowrap ${
-                activeTab === 'staff'
-                  ? 'bg-amber-500/15 text-amber-400 border border-amber-500/30 shadow-sm'
-                  : 'text-slate-400 hover:text-white hover:bg-slate-800/50'
-              }`}
-            >
-              <UserCheck className="w-3.5 h-3.5" />
-              <span>Barber Portal</span>
-            </button>
-          )}
-
-          {/* Owner & Manager tabs */}
-          {(currentRole === 'salon_owner' || currentRole === 'manager') && (
-            <>
-              <button
-                onClick={() => onTabChange('verifications')}
-                className={`flex items-center space-x-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all whitespace-nowrap ${
-                  activeTab === 'verifications'
-                    ? 'bg-amber-500/15 text-amber-400 border border-amber-500/30 shadow-sm'
-                    : 'text-slate-400 hover:text-white hover:bg-slate-800/50'
-                }`}
-              >
-                <ShieldCheck className="w-3.5 h-3.5 text-emerald-400" />
-                <span>Verify Payments</span>
-                {pendingVerificationsCount !== undefined && pendingVerificationsCount > 0 && (
-                  <span className="ml-1 px-1.5 py-0.2 rounded-full bg-rose-500 text-white font-mono text-[10px] font-bold animate-pulse">
-                    {pendingVerificationsCount}
-                  </span>
-                )}
-              </button>
-
-              <button
-                onClick={() => onTabChange('services')}
-                className={`flex items-center space-x-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all whitespace-nowrap ${
-                  activeTab === 'services'
-                    ? 'bg-amber-500/15 text-amber-400 border border-amber-500/30 shadow-sm'
-                    : 'text-slate-400 hover:text-white hover:bg-slate-800/50'
-                }`}
-              >
-                <Layers className="w-3.5 h-3.5" />
-                <span>Services &amp; Dual Pricing</span>
-              </button>
-
-              <button
-                onClick={() => onTabChange('inventory')}
-                className={`flex items-center space-x-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all whitespace-nowrap ${
-                  activeTab === 'inventory'
-                    ? 'bg-amber-500/15 text-amber-400 border border-amber-500/30 shadow-sm'
-                    : 'text-slate-400 hover:text-white hover:bg-slate-800/50'
-                }`}
-              >
-                <Package className="w-3.5 h-3.5" />
-                <span>Inventory Alerts</span>
-              </button>
-
-              <button
-                onClick={() => onTabChange('customers')}
-                className={`flex items-center space-x-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all whitespace-nowrap ${
-                  activeTab === 'customers'
-                    ? 'bg-amber-500/15 text-amber-400 border border-amber-500/30 shadow-sm'
-                    : 'text-slate-400 hover:text-white hover:bg-slate-800/50'
-                }`}
-              >
-                <Users className="w-3.5 h-3.5" />
-                <span>Customer CRM</span>
-              </button>
-
-              <button
-                onClick={() => onTabChange('invoices')}
-                className={`flex items-center space-x-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all whitespace-nowrap ${
-                  activeTab === 'invoices'
-                    ? 'bg-amber-500/15 text-amber-400 border border-amber-500/30 shadow-sm'
-                    : 'text-slate-400 hover:text-white hover:bg-slate-800/50'
-                }`}
-              >
-                <FileText className="w-3.5 h-3.5" />
-                <span>GST Invoices</span>
-              </button>
-            </>
-          )}
-
-          {/* Owner only Analytics */}
-          {currentRole === 'salon_owner' && (
-            <button
-              onClick={() => onTabChange('analytics')}
-              className={`flex items-center space-x-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all whitespace-nowrap ${
-                activeTab === 'analytics'
-                  ? 'bg-amber-500/15 text-amber-400 border border-amber-500/30 shadow-sm'
-                  : 'text-slate-400 hover:text-white hover:bg-slate-800/50'
-              }`}
-            >
-              <BarChart3 className="w-3.5 h-3.5" />
-              <span>Owner Analytics</span>
-            </button>
           )}
 
           {/* Super Admin Tab */}

@@ -19,6 +19,7 @@ import { SuperAdminConsole } from './components/SuperAdminConsole';
 import { RegisterSalonScreen } from './components/RegisterSalonScreen';
 import { SubscriptionExpiredGate } from './components/SubscriptionExpiredGate';
 import { PaymentVerificationManager } from './components/PaymentVerificationManager';
+import { ManageStaffScreen } from './components/ManageStaffScreen';
 import { salonDataService, REGISTERED_SALONS } from './lib/salonDataService';
 import { salonStore } from './lib/mockStore';
 import { supabase } from './lib/supabaseClient';
@@ -92,6 +93,16 @@ export function App() {
     return unsubscribe;
   }, []);
 
+  // 3. Strict Role-Based Navigation Route Protection
+  useEffect(() => {
+    if (currentUser?.role === 'staff' && activeTab !== 'staff') {
+      setActiveTab('staff');
+    }
+    if (currentUser?.role === 'manager' && (activeTab === 'analytics' || activeTab === 'admin')) {
+      setActiveTab('dashboard');
+    }
+  }, [currentUser?.role, activeTab]);
+
   const handleAuthenticatedUser = async (user: { id: string; email?: string; user_metadata?: { full_name?: string } }) => {
     if (isResolvingRef.current) return;
     isResolvingRef.current = true;
@@ -148,7 +159,40 @@ export function App() {
         });
       }
 
-      // 3. Check login intent and saved role
+      // 3. Check if user is a registered Staff or Manager in any salon
+      const staffMember = await salonDataService.findStaffProfileByAuthUserOrEmail({
+        id: user.id,
+        email,
+        phone: (user as any).phone
+      });
+
+      if (staffMember) {
+        if (staffMember.isDeactivated) {
+          alert('Access Denied: Your staff account has been deactivated by salon management. Please contact your salon administrator.');
+          if (supabase) {
+            await supabase.auth.signOut().catch(() => {});
+          }
+          return;
+        }
+
+        if (email) {
+          try {
+            localStorage.setItem(`wbs_user_role_${email}`, staffMember.profile.role);
+            localStorage.setItem(`wbs_active_salon_${email}`, staffMember.salon.id);
+          } catch {}
+        }
+
+        return await resolveSalonForUser({
+          id: user.id,
+          email,
+          name: staffMember.profile.full_name || name,
+          role: staffMember.profile.role,
+          assignedSalonId: staffMember.profile.salon_id,
+          phone: staffMember.profile.phone
+        }, [staffMember.salon]);
+      }
+
+      // 4. Check login intent and saved role
       const storedRole = email ? localStorage.getItem(`wbs_user_role_${email}`) : null;
       const loginIntent = sessionStorage.getItem('wbs_login_intent') || localStorage.getItem('wbs_login_intent');
 
@@ -256,7 +300,7 @@ export function App() {
         setIsPickerActive(false);
         // Preserve active tab if user was already on a valid screen
         setActiveTab(prev => {
-          const validTabs = ['dashboard', 'queue', 'marketplace', 'book', 'track', 'whatsapp', 'staff', 'verifications', 'services', 'inventory', 'customers', 'invoices', 'analytics'];
+          const validTabs = ['dashboard', 'queue', 'marketplace', 'book', 'track', 'whatsapp', 'staff', 'manage_staff', 'verifications', 'services', 'inventory', 'customers', 'invoices', 'analytics'];
           return validTabs.includes(prev) ? prev : 'dashboard';
         });
       }
@@ -508,7 +552,14 @@ export function App() {
           />
         )}
         {activeTab === 'whatsapp' && <WhatsAppSimulator />}
-        {activeTab === 'staff' && <StaffPortal />}
+        {activeTab === 'staff' && <StaffPortal currentUser={currentUser} />}
+        {activeTab === 'manage_staff' && (
+          <ManageStaffScreen 
+            currentSalon={activeSalon}
+            currentUserRole={currentUser.role}
+            currentUserEmail={currentUser.email}
+          />
+        )}
         {activeTab === 'verifications' && (
           <PaymentVerificationManager salonId={activeSalon.id} salonName={activeSalon.name} />
         )}
