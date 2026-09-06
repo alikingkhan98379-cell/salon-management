@@ -385,16 +385,16 @@ INSERT INTO salon_owners (user_id, salon_id, is_primary) VALUES
 
 -- Jaipur Services
 INSERT INTO services (id, salon_id, name, category, description, duration_minutes, in_salon_price, home_service_price) VALUES
-('s1111111-1111-1111-1111-111111111111', 'a1b2c3d4-e5f6-4a5b-8c9d-0e1f2a3b4c5d', 'Jaipur Signature Fade & Scissor Cut', 'Hair', 'Precision fade tailored to face structure, wash and matte styling.', 30, 250.00, 450.00),
-('s2222222-2222-2222-2222-222222222222', 'a1b2c3d4-e5f6-4a5b-8c9d-0e1f2a3b4c5d', 'Royal Beard Sculpt & Hot Towel', 'Beard', 'Straight razor detailing, beard oil conditioning, and hot steam therapy.', 25, 180.00, 320.00),
-('s3333333-3333-3333-3333-333333333333', 'a1b2c3d4-e5f6-4a5b-8c9d-0e1f2a3b4c5d', 'Gentlemen Combo (Hair + Beard)', 'Combo', 'Haircut + beard shaping + relaxing express head massage.', 50, 380.00, 650.00);
+('10000000-0000-0000-0000-000000000001', 'a1b2c3d4-e5f6-4a5b-8c9d-0e1f2a3b4c5d', 'Jaipur Signature Fade & Scissor Cut', 'Hair', 'Precision fade tailored to face structure, wash and matte styling.', 30, 250.00, 450.00),
+('10000000-0000-0000-0000-000000000002', 'a1b2c3d4-e5f6-4a5b-8c9d-0e1f2a3b4c5d', 'Royal Beard Sculpt & Hot Towel', 'Beard', 'Straight razor detailing, beard oil conditioning, and hot steam therapy.', 25, 180.00, 320.00),
+('10000000-0000-0000-0000-000000000003', 'a1b2c3d4-e5f6-4a5b-8c9d-0e1f2a3b4c5d', 'Gentlemen Combo (Hair + Beard)', 'Combo', 'Haircut + beard shaping + relaxing express head massage.', 50, 380.00, 650.00);
 
 -- Udaipur Services (Distinct Pricing & Names to prove isolation!)
 INSERT INTO services (id, salon_id, name, category, description, duration_minutes, in_salon_price, home_service_price) VALUES
-('u1111111-1111-1111-1111-111111111111', 'b2c3d4e5-f6a7-5b6c-9d0e-1f2a3b4c5d6e', 'Lake City Premium Scissor Cut & Spa', 'Hair', 'Udaipur special scissor cut and organic hair spa wash.', 35, 300.00, 500.00),
-('u2222222-2222-2222-2222-222222222222', 'b2c3d4e5-f6a7-5b6c-9d0e-1f2a3b4c5d6e', 'Maharaja Sandalwood Beard Detailing', 'Beard', 'Luxury sandalwood beard wash and contour razor shaping.', 30, 220.00, 380.00);
+('20000000-0000-0000-0000-000000000001', 'b2c3d4e5-f6a7-5b6c-9d0e-1f2a3b4c5d6e', 'Lake City Premium Scissor Cut & Spa', 'Hair', 'Udaipur special scissor cut and organic hair spa wash.', 35, 300.00, 500.00),
+('20000000-0000-0000-0000-000000000002', 'b2c3d4e5-f6a7-5b6c-9d0e-1f2a3b4c5d6e', 'Maharaja Sandalwood Beard Detailing', 'Beard', 'Luxury sandalwood beard wash and contour razor shaping.', 30, 220.00, 380.00);
 
 -- Seed Customers
 INSERT INTO customers (id, salon_id, name, phone, email, allergy_notes, hair_preference_notes, behavior_notes, total_visits, total_spent) VALUES
-('c1111111-1111-1111-1111-111111111111', 'a1b2c3d4-e5f6-4a5b-8c9d-0e1f2a3b4c5d', 'Sameer Khan', '+91 98290 11223', 'sameer@gmail.com', 'Sensitive skin on neck', 'Low skin taper fade, matte clay', 'Always punctual, prefers quiet service', 4, 1520.00),
-('c2222222-2222-2222-2222-222222222222', 'b2c3d4e5-f6a7-5b6c-9d0e-1f2a3b4c5d6e', 'Prateek Jain', '+91 98290 33445', 'prateek@gmail.com', 'None', 'Pompadour, scissor-cut sides', 'Loves coffee while getting haircut', 2, 720.00);
+('c0000000-0000-0000-0000-000000000001', 'a1b2c3d4-e5f6-4a5b-8c9d-0e1f2a3b4c5d', 'Sameer Khan', '+91 98290 11223', 'sameer@gmail.com', 'Sensitive skin on neck', 'Low skin taper fade, matte clay', 'Always punctual, prefers quiet service', 4, 1520.00),
+('c0000000-0000-0000-0000-000000000002', 'b2c3d4e5-f6a7-5b6c-9d0e-1f2a3b4c5d6e', 'Prateek Jain', '+91 98290 33445', 'prateek@gmail.com', 'None', 'Pompadour, scissor-cut sides', 'Loves coffee while getting haircut', 2, 720.00);

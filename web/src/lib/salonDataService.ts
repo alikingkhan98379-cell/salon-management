@@ -61,7 +61,7 @@ interface TenantStore {
 
 const DEFAULT_JAIPUR_SERVICES: Service[] = [
   {
-    id: 's1111111-1111-1111-1111-111111111111',
+    id: '10000000-0000-0000-0000-000000000001',
     salon_id: 'a1b2c3d4-e5f6-4a5b-8c9d-0e1f2a3b4c5d',
     name: 'Jaipur Signature Fade & Scissor Cut',
     category: 'Hair',
@@ -72,7 +72,7 @@ const DEFAULT_JAIPUR_SERVICES: Service[] = [
     is_active: true,
   },
   {
-    id: 's2222222-2222-2222-2222-222222222222',
+    id: '10000000-0000-0000-0000-000000000002',
     salon_id: 'a1b2c3d4-e5f6-4a5b-8c9d-0e1f2a3b4c5d',
     name: 'Royal Beard Sculpt & Hot Towel',
     category: 'Beard',
@@ -83,7 +83,7 @@ const DEFAULT_JAIPUR_SERVICES: Service[] = [
     is_active: true,
   },
   {
-    id: 's3333333-3333-3333-3333-333333333333',
+    id: '10000000-0000-0000-0000-000000000003',
     salon_id: 'a1b2c3d4-e5f6-4a5b-8c9d-0e1f2a3b4c5d',
     name: 'Gentlemen Combo (Hair + Beard)',
     category: 'Combo',
@@ -97,7 +97,7 @@ const DEFAULT_JAIPUR_SERVICES: Service[] = [
 
 const DEFAULT_UDAIPUR_SERVICES: Service[] = [
   {
-    id: 'u1111111-1111-1111-1111-111111111111',
+    id: '20000000-0000-0000-0000-000000000001',
     salon_id: 'b2c3d4e5-f6a7-5b6c-9d0e-1f2a3b4c5d6e',
     name: 'Lake City Premium Scissor Cut & Spa',
     category: 'Hair',
@@ -108,7 +108,7 @@ const DEFAULT_UDAIPUR_SERVICES: Service[] = [
     is_active: true,
   },
   {
-    id: 'u2222222-2222-2222-2222-222222222222',
+    id: '20000000-0000-0000-0000-000000000002',
     salon_id: 'b2c3d4e5-f6a7-5b6c-9d0e-1f2a3b4c5d6e',
     name: 'Maharaja Sandalwood Beard Detailing',
     category: 'Beard',
