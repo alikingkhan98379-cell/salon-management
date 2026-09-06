@@ -43,6 +43,7 @@ export function App() {
   const [userSalons, setUserSalons] = useState<Salon[]>([]);
   const [selectedSalon, setSelectedSalon] = useState<Salon | null>(null);
   const [isPickerActive, setIsPickerActive] = useState<boolean>(false);
+  const [isPartnerAuthOpen, setIsPartnerAuthOpen] = useState<boolean>(false);
 
   // Navigation State
   const [activeTab, setActiveTab] = useState<string>('dashboard');
@@ -147,10 +148,12 @@ export function App() {
         });
       }
 
-      // 3. For any other real Google account or email login:
-      // Query their owned salons from database or local storage.
-      // They NEVER automatically inherit Jaipur salon!
-      const tempUser: AuthUser = {
+      // 3. Check login intent and saved role
+      const storedRole = email ? localStorage.getItem(`wbs_user_role_${email}`) : null;
+      const loginIntent = sessionStorage.getItem('wbs_login_intent') || localStorage.getItem('wbs_login_intent');
+
+      // Check if user is already an owner of registered salons in Supabase / Local
+      const tempOwnerCheck: AuthUser = {
         id: user.id,
         email,
         name,
@@ -162,21 +165,46 @@ export function App() {
         if (email) {
           const savedActiveSalon = localStorage.getItem(`wbs_active_salon_${email}`);
           if (savedActiveSalon) {
-            tempUser.ownedSalonIds = [savedActiveSalon];
+            tempOwnerCheck.ownedSalonIds = [savedActiveSalon];
           }
         }
       } catch {}
 
-      const owned = await salonDataService.fetchUserSalons(tempUser);
+      const owned = await salonDataService.fetchUserSalons(tempOwnerCheck);
+
+      // If user owns a salon, they are definitely a salon owner!
       if (owned.length > 0) {
-        tempUser.ownedSalonIds = owned.map(s => s.id);
+        tempOwnerCheck.ownedSalonIds = owned.map(s => s.id);
         try {
           if (email) {
             localStorage.setItem(`wbs_active_salon_${email}`, owned[0].id);
+            localStorage.setItem(`wbs_user_role_${email}`, 'salon_owner');
           }
         } catch {}
+        return await resolveSalonForUser(tempOwnerCheck, owned);
       }
-      await resolveSalonForUser(tempUser, owned);
+
+      // If user does NOT own any salon:
+      // Distinguish Customer vs Salon Owner by explicit login intent:
+      if (loginIntent === 'salon_owner') {
+        // User deliberately came via Salon Partner Portal and owns 0 salons -> route to RegisterSalonScreen
+        tempOwnerCheck.role = 'salon_owner';
+        return await resolveSalonForUser(tempOwnerCheck, []);
+      }
+
+      // Otherwise: Default for all customers, online bookers & general users is STRICTLY 'customer'!
+      // They NEVER see Register Your Salon!
+      const customerUser: AuthUser = {
+        id: user.id,
+        email,
+        name,
+        role: 'customer',
+        ownedSalonIds: []
+      };
+      if (email) {
+        localStorage.setItem(`wbs_user_role_${email}`, 'customer');
+      }
+      return await resolveSalonForUser(customerUser, []);
     } finally {
       isResolvingRef.current = false;
     }
@@ -253,6 +281,7 @@ export function App() {
 
   const handleLogout = async () => {
     lastAuthUserIdRef.current = null;
+    setIsPartnerAuthOpen(false);
     if (currentUser?.email) {
       try {
         localStorage.removeItem(`wbs_active_salon_${currentUser.email.trim().toLowerCase()}`);
@@ -274,21 +303,47 @@ export function App() {
   };
 
   // ---------------------------------------------------------------------------
-  // AUTH GATE: Strict check. If no session, ONLY render AuthScreen
+  // 1. ANONYMOUS GUEST & CUSTOMER ROUTE: Open Browsing (Zero Login Required)
   // ---------------------------------------------------------------------------
   if (!currentUser) {
+    if (isPartnerAuthOpen) {
+      return (
+        <AuthScreen
+          onBackToMarketplace={() => setIsPartnerAuthOpen(false)}
+          onTestLogin={(testUser) => {
+            setIsPartnerAuthOpen(false);
+            resolveSalonForUser(testUser);
+          }}
+        />
+      );
+    }
+
     return (
-      <AuthScreen
-        onTestLogin={(testUser) => {
-          resolveSalonForUser(testUser);
-        }}
-      />
+      <div className="min-h-screen bg-[#0B0F19] text-slate-100 flex flex-col font-sans">
+        <main className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-6">
+          <CustomerMarketplace
+            customer={null}
+            initialTab={activeTab === 'track' ? 'track' : 'marketplace'}
+            initialTokenCode={trackingTokenCode}
+            onNavigateToTrack={handleNavigateToTrack}
+            onLogout={handleLogout}
+            onOpenPartnerLogin={() => setIsPartnerAuthOpen(true)}
+            onCustomerLogin={(custUser) => {
+              resolveSalonForUser({
+                id: custUser.id,
+                email: custUser.email,
+                name: custUser.name,
+                phone: custUser.phone,
+                role: 'customer'
+              });
+            }}
+          />
+        </main>
+      </div>
     );
   }
 
-  // ---------------------------------------------------------------------------
-  // CUSTOMER ROUTE: Customer Marketplace Experience
-  // ---------------------------------------------------------------------------
+  // Authenticated Customer: Always Marketplace, NEVER RegisterSalonScreen!
   if (currentUser.role === 'customer') {
     return (
       <div className="min-h-screen bg-[#0B0F19] text-slate-100 flex flex-col font-sans">
@@ -304,6 +359,7 @@ export function App() {
             initialTokenCode={trackingTokenCode}
             onNavigateToTrack={handleNavigateToTrack}
             onLogout={handleLogout}
+            onOpenPartnerLogin={() => setIsPartnerAuthOpen(true)}
           />
         </main>
       </div>

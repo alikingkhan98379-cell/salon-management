@@ -30,9 +30,10 @@ interface AuthScreenProps {
     ownedSalonIds?: string[];
     assignedSalonId?: string;
   }) => void;
+  onBackToMarketplace?: () => void;
 }
 
-export const AuthScreen: React.FC<AuthScreenProps> = ({ onTestLogin }) => {
+export const AuthScreen: React.FC<AuthScreenProps> = ({ onTestLogin, onBackToMarketplace }) => {
   // Two required login options: Email OTP and Google OAuth
   const [authMethod, setAuthMethod] = useState<'email' | 'google' | 'customer'>('email');
   const [showGuestTracker, setShowGuestTracker] = useState(false);
@@ -60,7 +61,8 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onTestLogin }) => {
     if (!email) return;
     setIsLoading(true);
     setErrorMessage(null);
-    setSuccessMessage(null);
+    sessionStorage.setItem('wbs_login_intent', 'salon_owner');
+    localStorage.setItem('wbs_login_intent', 'salon_owner');
 
     try {
       if (supabase) {
@@ -183,6 +185,8 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onTestLogin }) => {
   const handleGoogleSignIn = async () => {
     setIsLoading(true);
     setErrorMessage(null);
+    sessionStorage.setItem('wbs_login_intent', 'salon_owner');
+    localStorage.setItem('wbs_login_intent', 'salon_owner');
     try {
       if (supabase) {
         const { error } = await supabase.auth.signInWithOAuth({
@@ -216,6 +220,17 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onTestLogin }) => {
       <div className="absolute -top-40 -left-40 w-96 h-96 bg-amber-500/10 rounded-full blur-3xl pointer-events-none" />
       <div className="absolute -bottom-40 -right-40 w-96 h-96 bg-blue-500/10 rounded-full blur-3xl pointer-events-none" />
 
+      {/* Back to Marketplace Link */}
+      {onBackToMarketplace && (
+        <button
+          type="button"
+          onClick={onBackToMarketplace}
+          className="mb-6 px-4 py-2 bg-slate-900/90 border border-slate-800 hover:border-slate-700 text-slate-300 hover:text-white rounded-2xl text-xs font-semibold flex items-center gap-2 transition shadow-lg relative z-20"
+        >
+          <span>← Back to Browse Salons (Customer Marketplace)</span>
+        </button>
+      )}
+
       {/* Brand Header */}
       <div className="max-w-md w-full text-center mb-8 relative z-10">
         <div className="inline-flex items-center justify-center p-3 rounded-2xl bg-gradient-to-br from-amber-500/20 to-amber-600/5 border border-amber-500/30 mb-4 shadow-xl shadow-amber-500/5">
@@ -225,8 +240,11 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onTestLogin }) => {
           Western Boys Salon
           <Crown className="w-5 h-5 text-amber-400 inline" />
         </h1>
-        <p className="text-sm text-slate-400 mt-1.5 font-medium">
-          Multi-Tenant Cloud Platform &amp; Customer Marketplace
+        <div className="mt-2 inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-amber-500/10 border border-amber-500/20 text-amber-400 text-xs font-bold uppercase tracking-wider">
+          <Building2 className="w-3.5 h-3.5" /> Salon Partner &amp; Management Portal
+        </div>
+        <p className="text-xs text-slate-400 mt-2 font-medium">
+          Dedicated access for Salon Owners, Managers, Barbers &amp; Super Admins
         </p>
       </div>
 

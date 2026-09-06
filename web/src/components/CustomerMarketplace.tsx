@@ -29,18 +29,21 @@ import { salonDataService, REGISTERED_SALONS } from '../lib/salonDataService';
 import { Salon, Service, Profile, CustomerVisitRecord, ServiceLocation } from '../types';
 import { UpiPaymentVerificationModal } from './UpiPaymentVerificationModal';
 import { TokenTracker } from './TokenTracker';
+import { CustomerAuthModal } from './CustomerAuthModal';
 
 interface CustomerMarketplaceProps {
-  customer: {
+  customer?: {
     id: string;
     name: string;
     email: string;
     phone?: string;
-  };
+  } | null;
   initialTab?: 'marketplace' | 'history' | 'track';
   initialTokenCode?: string;
   onNavigateToTrack: (tokenCode: string) => void;
   onLogout: () => void;
+  onOpenPartnerLogin?: () => void;
+  onCustomerLogin?: (user: any) => void;
 }
 
 export const CustomerMarketplace: React.FC<CustomerMarketplaceProps> = ({
@@ -48,7 +51,9 @@ export const CustomerMarketplace: React.FC<CustomerMarketplaceProps> = ({
   initialTab,
   initialTokenCode,
   onNavigateToTrack,
-  onLogout
+  onLogout,
+  onOpenPartnerLogin,
+  onCustomerLogin
 }) => {
   const [salons, setSalons] = useState<Salon[]>(REGISTERED_SALONS);
   const [searchQuery, setSearchQuery] = useState('');
@@ -79,7 +84,7 @@ export const CustomerMarketplace: React.FC<CustomerMarketplaceProps> = ({
   const [selectedSlot, setSelectedSlot] = useState<string>('12:00 PM');
   
   // Compulsory Phone & Details
-  const [bookingPhone, setBookingPhone] = useState<string>(customer.phone || '');
+  const [bookingPhone, setBookingPhone] = useState<string>(customer?.phone || '');
   const [customerNotes, setCustomerNotes] = useState<string>('');
   const [homeAddress, setHomeAddress] = useState<string>('');
   
@@ -89,7 +94,8 @@ export const CustomerMarketplace: React.FC<CustomerMarketplaceProps> = ({
   const [selectedRadius, setSelectedRadius] = useState<number | 'all'>('all');
   const [isPendingNotice, setIsPendingNotice] = useState(false);
 
-  // Payment & Live Token Modal
+  // Authentication & Payment Modals
+  const [isCustomerAuthModalOpen, setIsCustomerAuthModalOpen] = useState<boolean>(false);
   const [isPaymentModalOpen, setIsPaymentModalOpen] = useState<boolean>(false);
   const [confirmedToken, setConfirmedToken] = useState<{ tokenCode: string; waitMinutes: number; salonName: string } | null>(null);
 
@@ -101,9 +107,15 @@ export const CustomerMarketplace: React.FC<CustomerMarketplaceProps> = ({
     salonDataService.getAllSalons().then(res => setSalons(res));
   }, []);
 
+  useEffect(() => {
+    if (customer?.phone && !bookingPhone) {
+      setBookingPhone(customer.phone);
+    }
+  }, [customer?.phone]);
+
   // Fetch visit history whenever customer or tab changes
   useEffect(() => {
-    if (customer.phone || customer.email) {
+    if (customer && (customer.phone || customer.email)) {
       setIsLoadingHistory(true);
       salonDataService.fetchCustomerHistory(customer.phone || bookingPhone, customer.email)
         .then(history => {
@@ -111,8 +123,10 @@ export const CustomerMarketplace: React.FC<CustomerMarketplaceProps> = ({
           setIsLoadingHistory(false);
         })
         .catch(() => setIsLoadingHistory(false));
+    } else {
+      setVisitHistory([]);
     }
-  }, [customer.phone, customer.email, bookingPhone, activeTab]);
+  }, [customer?.phone, customer?.email, bookingPhone, activeTab]);
 
   // GPS Geolocation Handler
   const handleGetLocation = () => {
@@ -193,12 +207,30 @@ export const CustomerMarketplace: React.FC<CustomerMarketplaceProps> = ({
 
   const handleStartBooking = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!bookingPhone) {
-      alert('Phone number is compulsory for all bookings and visit history tracking.');
+    if (!selectedService) return;
+
+    // If customer is not logged in, open Email OTP login modal immediately
+    if (!customer) {
+      setIsCustomerAuthModalOpen(true);
       return;
     }
-    if (!selectedService) return;
+
+    if (!bookingPhone.trim()) {
+      alert('Phone number is compulsory for live queue token tracking & SMS updates.');
+      return;
+    }
+
     setIsPaymentModalOpen(true);
+  };
+
+  const handleCustomerAuthenticated = (authCust: any) => {
+    if (onCustomerLogin) {
+      onCustomerLogin(authCust);
+    }
+    if (authCust.phone && !bookingPhone) {
+      setBookingPhone(authCust.phone);
+    }
+    setIsCustomerAuthModalOpen(false);
   };
 
   const handlePaymentSuccess = async (paymentDetails: {
@@ -212,9 +244,9 @@ export const CustomerMarketplace: React.FC<CustomerMarketplaceProps> = ({
       salonId: selectedSalon.id,
       serviceId: selectedService.id,
       staffId: selectedStaffId || undefined,
-      customerName: customer.name,
+      customerName: customer?.name || 'Customer',
       customerPhone: bookingPhone,
-      customerEmail: customer.email,
+      customerEmail: customer?.email || '',
       serviceType: serviceLocation,
       bookingChannel: 'web',
       appointmentDate: selectedDate,
@@ -233,7 +265,9 @@ export const CustomerMarketplace: React.FC<CustomerMarketplaceProps> = ({
     });
 
     // Refresh history
-    salonDataService.fetchCustomerHistory(bookingPhone, customer.email).then(setVisitHistory);
+    if (customer?.email) {
+      salonDataService.fetchCustomerHistory(bookingPhone, customer.email).then(setVisitHistory);
+    }
   };
 
   const currentPrice = selectedService
@@ -264,28 +298,52 @@ export const CustomerMarketplace: React.FC<CustomerMarketplaceProps> = ({
           </p>
         </div>
 
-        {/* Customer Identifier Card */}
-        <div className="flex items-center gap-3 bg-slate-950/80 border border-slate-800 px-4 py-3 rounded-2xl">
-          <div className="w-10 h-10 rounded-xl bg-amber-500/10 border border-amber-500/20 flex items-center justify-center text-amber-400 font-bold">
-            {customer.name.slice(0, 2).toUpperCase()}
-          </div>
-          <div className="text-xs">
-            <div className="font-bold text-white flex items-center gap-1">
-              {customer.name}
-              <ShieldCheck className="w-3.5 h-3.5 text-emerald-400" />
+        {/* Customer Identifier Card or Guest Actions */}
+        {customer ? (
+          <div className="flex items-center gap-3 bg-slate-950/80 border border-slate-800 px-4 py-3 rounded-2xl">
+            <div className="w-10 h-10 rounded-xl bg-amber-500/10 border border-amber-500/20 flex items-center justify-center text-amber-400 font-bold">
+              {customer.name.slice(0, 2).toUpperCase()}
             </div>
-            <div className="text-slate-400 font-mono text-[11px]">{customer.phone || bookingPhone || 'Phone compulsory for booking'}</div>
-            <div className="text-slate-500 text-[10px]">{customer.email}</div>
+            <div className="text-xs">
+              <div className="font-bold text-white flex items-center gap-1">
+                {customer.name}
+                <ShieldCheck className="w-3.5 h-3.5 text-emerald-400" />
+              </div>
+              <div className="text-slate-400 font-mono text-[11px]">{customer.phone || bookingPhone || 'Phone compulsory for booking'}</div>
+              <div className="text-slate-500 text-[10px]">{customer.email}</div>
+            </div>
+            <button
+              type="button"
+              onClick={onLogout}
+              title="Sign Out"
+              className="ml-2 p-2 rounded-xl text-slate-400 hover:text-rose-400 hover:bg-slate-900 transition-colors"
+            >
+              <LogOut className="w-4 h-4" />
+            </button>
           </div>
-          <button
-            type="button"
-            onClick={onLogout}
-            title="Sign Out"
-            className="ml-2 p-2 rounded-xl text-slate-400 hover:text-rose-400 hover:bg-slate-900 transition-colors"
-          >
-            <LogOut className="w-4 h-4" />
-          </button>
-        </div>
+        ) : (
+          <div className="flex flex-wrap items-center gap-2.5">
+            <button
+              type="button"
+              onClick={() => setIsCustomerAuthModalOpen(true)}
+              className="px-4 py-2.5 bg-slate-800 hover:bg-slate-700 border border-slate-700 rounded-2xl text-xs font-semibold text-slate-200 flex items-center gap-1.5 transition shadow-sm"
+            >
+              <User className="w-3.5 h-3.5 text-amber-400" />
+              <span>Customer Sign In</span>
+            </button>
+
+            {onOpenPartnerLogin && (
+              <button
+                type="button"
+                onClick={onOpenPartnerLogin}
+                className="px-4 py-2.5 bg-gradient-to-r from-amber-500/10 to-amber-600/10 hover:from-amber-500/20 hover:to-amber-600/20 border border-amber-500/30 rounded-2xl text-xs font-bold text-amber-300 flex items-center gap-1.5 transition shadow-sm"
+              >
+                <Building2 className="w-3.5 h-3.5 text-amber-400" />
+                <span>Salon Partner Login</span>
+              </button>
+            )}
+          </div>
+        )}
       </div>
 
       {/* Tabs: Marketplace vs Live Queue Tracker vs Visit History */}
@@ -773,14 +831,27 @@ export const CustomerMarketplace: React.FC<CustomerMarketplaceProps> = ({
                   </div>
                 </div>
 
-                <button
-                  type="submit"
-                  disabled={!selectedService || !bookingPhone}
-                  className="w-full py-3 bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 hover:to-amber-500 text-slate-950 font-bold rounded-2xl flex items-center justify-center gap-2 text-xs shadow-lg shadow-amber-500/20 transition-all disabled:opacity-50"
-                >
-                  <span>Pay &amp; Get Live Token</span>
-                  <ArrowRight className="w-4 h-4" />
-                </button>
+                {customer ? (
+                  <button
+                    type="submit"
+                    disabled={!selectedService || !bookingPhone.trim()}
+                    className="w-full py-3 bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 hover:to-amber-500 text-slate-950 font-bold rounded-2xl flex items-center justify-center gap-2 text-xs shadow-lg shadow-amber-500/20 transition-all disabled:opacity-50"
+                  >
+                    <span>Pay &amp; Get Live Token</span>
+                    <ArrowRight className="w-4 h-4" />
+                  </button>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() => setIsCustomerAuthModalOpen(true)}
+                    disabled={!selectedService}
+                    className="w-full py-3 bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 hover:to-amber-500 text-slate-950 font-bold rounded-2xl flex items-center justify-center gap-2 text-xs shadow-lg shadow-amber-500/20 transition-all disabled:opacity-50"
+                  >
+                    <Sparkles className="w-4 h-4" />
+                    <span>Verify Email &amp; Book Token</span>
+                    <ArrowRight className="w-4 h-4" />
+                  </button>
+                )}
               </form>
             </div>
 
@@ -791,7 +862,29 @@ export const CustomerMarketplace: React.FC<CustomerMarketplaceProps> = ({
       {/* ========================================================================= */}
       {/* TAB 2: MY HAIR PROFILE & CROSS-SALON VISIT HISTORY                         */}
       {/* ========================================================================= */}
-      {activeTab === 'history' && (
+      {activeTab === 'history' && !customer && (
+        <div className="bg-slate-900 border border-slate-800 rounded-3xl p-8 text-center max-w-md mx-auto space-y-4 shadow-xl">
+          <div className="w-12 h-12 rounded-2xl bg-amber-500/10 border border-amber-500/20 text-amber-400 flex items-center justify-center mx-auto">
+            <History className="w-6 h-6" />
+          </div>
+          <div>
+            <h3 className="text-lg font-bold text-white font-serif">Sign In to View Your Hair Profile</h3>
+            <p className="text-xs text-slate-400 mt-1">
+              Access your past haircut styles, preferred barbers, and cross-salon visit history across all branches.
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={() => setIsCustomerAuthModalOpen(true)}
+            className="px-6 py-2.5 bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 hover:to-amber-500 text-slate-950 font-bold rounded-2xl text-xs inline-flex items-center gap-2 shadow-lg shadow-amber-500/20 transition"
+          >
+            <Sparkles className="w-3.5 h-3.5" />
+            <span>Sign In with Email OTP</span>
+          </button>
+        </div>
+      )}
+
+      {activeTab === 'history' && customer && (
         <div className="space-y-6">
           
           {/* Profile Overview Card */}
@@ -939,6 +1032,16 @@ export const CustomerMarketplace: React.FC<CustomerMarketplaceProps> = ({
         </div>
       )}
 
+      {/* Customer Email OTP Authentication Modal (Checkout Trigger) */}
+      <CustomerAuthModal
+        isOpen={isCustomerAuthModalOpen}
+        onClose={() => setIsCustomerAuthModalOpen(false)}
+        onAuthenticated={handleCustomerAuthenticated}
+        salonName={selectedSalon?.name}
+        serviceName={selectedService?.name}
+        initialEmail={customer?.email}
+      />
+
       {/* Payment Gateway Modal (UPI Screenshot Verification) */}
       {isPaymentModalOpen && selectedService && selectedSalon && (
         <UpiPaymentVerificationModal
@@ -947,7 +1050,7 @@ export const CustomerMarketplace: React.FC<CustomerMarketplaceProps> = ({
           serviceType={serviceLocation}
           amount={currentPrice}
           stylistName={salonStaff.find(s => s.id === selectedStaffId)?.full_name || 'First Available Stylist'}
-          customerName={customer.name}
+          customerName={customer?.name || 'Customer'}
           customerPhone={bookingPhone}
           onSuccess={handlePaymentSuccess}
           onClose={() => setIsPaymentModalOpen(false)}
