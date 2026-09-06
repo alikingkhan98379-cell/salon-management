@@ -406,7 +406,7 @@ export function App() {
         {activeTab === 'customers' && <CustomerCRM />}
         {activeTab === 'invoices' && <InvoiceGenerator />}
         {activeTab === 'analytics' && <AnalyticsView />}
-        {activeTab === 'admin' && <SuperAdminConsole />}
+        {activeTab === 'admin' && <SuperAdminConsole adminEmail={currentUser.email} onLogout={handleLogout} />}
 
       </main>
 

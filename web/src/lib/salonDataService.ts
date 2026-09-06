@@ -474,7 +474,7 @@ class SalonDataService {
         console.warn('Supabase is_platform_admin check error:', err);
       }
     }
-    return cleanEmail === 'admin@westernboyssaas.com';
+    return cleanEmail === 'saifaliansari983790@gmail.com';
   }
 
   // Load Salons for User according to role - STRICT: ZERO DEFAULT LEAKAGE
@@ -829,7 +829,7 @@ class SalonDataService {
   private auditLogs: AdminAuditLog[] = [
     {
       id: 'log-seed-1',
-      admin_email: 'admin@westernboyssaas.com',
+      admin_email: 'saifaliansari983790@gmail.com',
       action: 'PLATFORM_BOOTSTRAP',
       target_salon_name: 'Platform',
       details: { message: 'Multi-tenant cloud initialized with 2 seeded salons' },

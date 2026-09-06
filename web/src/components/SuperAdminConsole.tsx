@@ -32,7 +32,7 @@ interface SuperAdminConsoleProps {
 }
 
 export const SuperAdminConsole: React.FC<SuperAdminConsoleProps> = ({
-  adminEmail = 'admin@westernboyssaas.com',
+  adminEmail = 'saifaliansari983790@gmail.com',
   onLogout
 }) => {
   const [salons, setSalons] = useState<Salon[]>([]);

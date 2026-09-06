@@ -395,10 +395,10 @@ INSERT INTO salons (
 
 -- Profiles & Platform Admins
 -- 1. Super Admin Seed
-INSERT INTO platform_admins (email) VALUES ('admin@westernboyssaas.com') ON CONFLICT (email) DO NOTHING;
+INSERT INTO platform_admins (email) VALUES ('saifaliansari983790@gmail.com') ON CONFLICT (email) DO NOTHING;
 
 INSERT INTO profiles (id, auth_user_id, salon_id, role, full_name, phone, email, specialties, rating)
-VALUES ('00000000-0000-0000-0000-000000000001', '00000000-0000-0000-0000-000000000001', NULL, 'super_admin', 'Platform Super Admin', '+91 99999 00000', 'admin@westernboyssaas.com', ARRAY['Platform Overseer'], 5.0);
+VALUES ('00000000-0000-0000-0000-000000000001', '00000000-0000-0000-0000-000000000001', NULL, 'super_admin', 'Platform Super Admin', '+91 99999 00000', 'saifaliansari983790@gmail.com', ARRAY['Platform Overseer'], 5.0);
 
 -- 2. Multi-Salon Owner: Kabir Khan (owns BOTH Jaipur and Udaipur)
 INSERT INTO profiles (id, auth_user_id, salon_id, role, full_name, phone, email, specialties, rating)

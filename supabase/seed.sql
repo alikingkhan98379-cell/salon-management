@@ -46,7 +46,7 @@ INSERT INTO profiles (
     'super_admin',
     'Super Admin',
     '+91 99999 00000',
-    'admin@westernboyssaas.com',
+    'saifaliansari983790@gmail.com',
     ARRAY['Platform Overseer', 'Tenant Admin'],
     5.0
 ),
