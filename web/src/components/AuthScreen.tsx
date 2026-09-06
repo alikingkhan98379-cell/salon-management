@@ -90,7 +90,7 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onTestLogin }) => {
       if (supabase) {
         const { error } = await supabase.auth.verifyOtp({
           email,
-          token: emailOtp,
+          token: emailOtp.trim(),
           type: 'email'
         });
         if (error) throw error;
@@ -154,7 +154,7 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onTestLogin }) => {
       if (supabase) {
         const { error } = await supabase.auth.verifyOtp({
           email: customerEmail,
-          token: customerOtp,
+          token: customerOtp.trim(),
           type: 'email'
         });
         if (error) throw error;
@@ -366,17 +366,17 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onTestLogin }) => {
                   <input
                     type="text"
                     required
-                    maxLength={6}
-                    placeholder="Enter 6-digit code"
+                    maxLength={10}
+                    placeholder="Enter OTP code"
                     value={emailOtp}
                     onChange={(e) => setEmailOtp(e.target.value)}
-                    className="w-full bg-slate-950 border border-slate-800 rounded-2xl px-4 py-2.5 text-center tracking-[0.5em] text-lg font-mono text-amber-400 placeholder-slate-600 focus:outline-none focus:border-amber-400 transition-colors"
+                    className="w-full bg-slate-950 border border-slate-800 rounded-2xl px-4 py-2.5 text-center tracking-[0.3em] text-lg font-mono text-amber-400 placeholder-slate-600 focus:outline-none focus:border-amber-400 transition-colors"
                   />
                 </div>
 
                 <button
                   type="submit"
-                  disabled={isLoading || emailOtp.length < 6}
+                  disabled={isLoading || emailOtp.trim().length < 6}
                   className="w-full py-3 bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 hover:to-amber-500 text-slate-950 font-bold rounded-2xl shadow-lg shadow-amber-500/20 flex items-center justify-center gap-2 transition-all disabled:opacity-50 text-sm"
                 >
                   {isLoading ? (
@@ -528,17 +528,17 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onTestLogin }) => {
                   <input
                     type="text"
                     required
-                    maxLength={6}
-                    placeholder="Enter 6-digit OTP"
+                    maxLength={10}
+                    placeholder="Enter OTP code"
                     value={customerOtp}
                     onChange={(e) => setCustomerOtp(e.target.value)}
-                    className="w-full bg-slate-950 border border-slate-800 rounded-2xl px-4 py-2.5 text-center tracking-[0.4em] text-base font-mono text-emerald-400 placeholder-slate-600 focus:outline-none focus:border-emerald-400"
+                    className="w-full bg-slate-950 border border-slate-800 rounded-2xl px-4 py-2.5 text-center tracking-[0.3em] text-base font-mono text-emerald-400 placeholder-slate-600 focus:outline-none focus:border-emerald-400"
                   />
                 </div>
 
                 <button
                   type="submit"
-                  disabled={isLoading || customerOtp.length < 6}
+                  disabled={isLoading || customerOtp.trim().length < 6}
                   className="w-full py-2.5 bg-gradient-to-r from-emerald-500 to-teal-600 text-slate-950 font-bold rounded-2xl shadow-lg flex items-center justify-center gap-2 text-xs"
                 >
                   {isLoading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <span>Enter Customer Marketplace</span>}
