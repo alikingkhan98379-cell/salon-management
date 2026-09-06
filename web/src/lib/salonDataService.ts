@@ -417,15 +417,111 @@ class SalonDataService {
         }
       ]
     });
+
+    this.loadLocalStorageSalons();
+  }
+
+  private loadLocalStorageSalons() {
+    try {
+      if (typeof window === 'undefined' || !window.localStorage) return;
+      const saved = localStorage.getItem('wbs_custom_salons');
+      if (saved) {
+        const parsed: Salon[] = JSON.parse(saved);
+        if (Array.isArray(parsed)) {
+          parsed.forEach(s => {
+            if (!this.allSalonsCache.some(existing => existing.id === s.id)) {
+              this.allSalonsCache.unshift(s);
+            }
+            const savedStore = localStorage.getItem('wbs_tenant_data_' + s.id);
+            if (savedStore) {
+              try {
+                this.tenantData.set(s.id, JSON.parse(savedStore));
+              } catch {}
+            }
+          });
+        }
+      }
+    } catch (e) {
+      console.warn('Could not load custom salons from localStorage:', e);
+    }
+  }
+
+  public saveSalonLocally(salon: Salon, ownerEmail?: string, ownerId?: string) {
+    try {
+      if (typeof window === 'undefined' || !window.localStorage) return;
+      const saved = localStorage.getItem('wbs_custom_salons');
+      let list: Salon[] = saved ? JSON.parse(saved) : [];
+      list = list.filter(s => s.id !== salon.id);
+      list.unshift(salon);
+      localStorage.setItem('wbs_custom_salons', JSON.stringify(list));
+
+      const mapStr = localStorage.getItem('wbs_owner_salons_map');
+      const ownerMap: Record<string, string[]> = mapStr ? JSON.parse(mapStr) : {};
+      if (ownerEmail) {
+        const cleanEmail = ownerEmail.trim().toLowerCase();
+        ownerMap[cleanEmail] = Array.from(new Set([...(ownerMap[cleanEmail] || []), salon.id]));
+      }
+      if (ownerId) {
+        ownerMap[ownerId] = Array.from(new Set([...(ownerMap[ownerId] || []), salon.id]));
+      }
+      localStorage.setItem('wbs_owner_salons_map', JSON.stringify(ownerMap));
+
+      const store = this.tenantData.get(salon.id);
+      if (store) {
+        localStorage.setItem('wbs_tenant_data_' + salon.id, JSON.stringify(store));
+      }
+    } catch (e) {
+      console.warn('Could not save salon to localStorage:', e);
+    }
+  }
+
+  public getLocalSalonsForUser(email?: string, userId?: string, ownedIds?: string[]): Salon[] {
+    this.loadLocalStorageSalons();
+    const foundIds = new Set<string>(ownedIds || []);
+    try {
+      if (typeof window !== 'undefined' && window.localStorage) {
+        const mapStr = localStorage.getItem('wbs_owner_salons_map');
+        if (mapStr) {
+          const ownerMap: Record<string, string[]> = JSON.parse(mapStr);
+          if (email) {
+            const cleanEmail = email.trim().toLowerCase();
+            (ownerMap[cleanEmail] || []).forEach(id => foundIds.add(id));
+          }
+          if (userId) {
+            (ownerMap[userId] || []).forEach(id => foundIds.add(id));
+          }
+        }
+        if (email) {
+          const activeSalonId = localStorage.getItem(`wbs_active_salon_${email.trim().toLowerCase()}`);
+          if (activeSalonId) foundIds.add(activeSalonId);
+        }
+      }
+    } catch {}
+
+    if (email) {
+      const cleanEmail = email.trim().toLowerCase();
+      this.allSalonsCache.forEach(s => {
+        if ((s.owner_email && s.owner_email.toLowerCase() === cleanEmail) ||
+            (s.email && s.email.toLowerCase() === cleanEmail)) {
+          foundIds.add(s.id);
+        }
+      });
+    }
+
+    return this.allSalonsCache.filter(s => foundIds.has(s.id));
   }
 
   private async checkSupabaseConnection() {
     if (!supabase) return;
     try {
-      const { data, error } = await supabase.from('salons').select('*').limit(5);
+      const { data, error } = await supabase.from('salons').select('*').limit(20);
       if (!error && data && data.length > 0) {
         this.isConnectedToSupabase = true;
-        this.allSalonsCache = data;
+        // Merge without wiping local custom salons
+        const map = new Map<string, Salon>();
+        this.allSalonsCache.forEach(s => map.set(s.id, s));
+        data.forEach((s: Salon) => map.set(s.id, s));
+        this.allSalonsCache = Array.from(map.values());
         this.notify();
       }
     } catch {
@@ -497,7 +593,7 @@ class SalonDataService {
   }
 
   // Load Salons for User according to role - STRICT: ZERO DEFAULT LEAKAGE
-  public async fetchUserSalons(user: { id: string; role: UserRole; ownedSalonIds?: string[]; assignedSalonId?: string }): Promise<Salon[]> {
+  public async fetchUserSalons(user: { id: string; role: UserRole; ownedSalonIds?: string[]; assignedSalonId?: string; email?: string }): Promise<Salon[]> {
     if (supabase) {
       try {
         if (user.role === 'super_admin') {
@@ -510,22 +606,33 @@ class SalonDataService {
             return data;
           }
         } else if (user.role === 'salon_owner') {
+          let foundRemote: Salon[] = [];
           if (isValidUUID(user.id)) {
             const { data } = await supabase
               .from('salon_owners')
               .select('salon_id, salons(*)')
               .eq('user_id', user.id);
             if (data && data.length > 0) {
-              const mapped = data.map((item: any) => item.salons).filter(Boolean);
-              if (mapped.length > 0) {
-                mapped.forEach((s: Salon) => {
-                  if (!this.allSalonsCache.some(existing => existing.id === s.id)) {
-                    this.allSalonsCache.unshift(s);
-                  }
-                });
-                return mapped;
-              }
+              foundRemote = data.map((item: any) => item.salons).filter(Boolean);
             }
+          }
+          if (foundRemote.length === 0 && user.email) {
+            const { data: emailSalons } = await supabase
+              .from('salons')
+              .select('*')
+              .ilike('email', user.email.trim().toLowerCase());
+            if (emailSalons && emailSalons.length > 0) {
+              foundRemote = emailSalons;
+            }
+          }
+          if (foundRemote.length > 0) {
+            foundRemote.forEach((s: Salon) => {
+              if (!this.allSalonsCache.some(existing => existing.id === s.id)) {
+                this.allSalonsCache.unshift(s);
+              }
+              this.saveSalonLocally(s, user.email, user.id);
+            });
+            return foundRemote;
           }
         } else if (user.role === 'manager' || user.role === 'staff') {
           if (isValidUUID(user.id)) {
@@ -544,10 +651,14 @@ class SalonDataService {
       }
     }
 
-    // Role-based local resolution fallback - STRICT: NEVER return default salon if not authorized
+    // Role-based local resolution fallback with localStorage backup
     if (user.role === 'super_admin') {
       return [...this.allSalonsCache];
     } else if (user.role === 'salon_owner') {
+      const localSalons = this.getLocalSalonsForUser(user.email, user.id, user.ownedSalonIds);
+      if (localSalons.length > 0) {
+        return localSalons;
+      }
       if (user.ownedSalonIds && user.ownedSalonIds.length > 0) {
         return this.getSalonsByIds(user.ownedSalonIds);
       }
@@ -796,6 +907,10 @@ class SalonDataService {
 
     this.allSalonsCache.unshift(newSalon);
     this.activeSalonId = salonId;
+
+    // Immediately persist salon and tenant data to localStorage
+    this.saveSalonLocally(newSalon, data.ownerEmail, data.ownerId);
+
     this.notify();
     return newSalon;
   }

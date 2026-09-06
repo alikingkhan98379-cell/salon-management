@@ -52,6 +52,13 @@ export function App() {
   const lastAuthUserIdRef = useRef<string | null>(null);
   const isResolvingRef = useRef<boolean>(false);
 
+  // Clean trailing '#' from OAuth redirect if present
+  useEffect(() => {
+    if (window.location.hash === '#' || window.location.hash.startsWith('#access_token') || window.location.hash.startsWith('#error')) {
+      window.history.replaceState(null, '', window.location.pathname + window.location.search);
+    }
+  }, []);
+
   // 1. Supabase Auth Session Listener
   useEffect(() => {
     if (supabase) {
@@ -141,7 +148,7 @@ export function App() {
       }
 
       // 3. For any other real Google account or email login:
-      // Query their owned salons from database.
+      // Query their owned salons from database or local storage.
       // They NEVER automatically inherit Jaipur salon!
       const tempUser: AuthUser = {
         id: user.id,
@@ -151,9 +158,23 @@ export function App() {
         ownedSalonIds: []
       };
 
+      try {
+        if (email) {
+          const savedActiveSalon = localStorage.getItem(`wbs_active_salon_${email}`);
+          if (savedActiveSalon) {
+            tempUser.ownedSalonIds = [savedActiveSalon];
+          }
+        }
+      } catch {}
+
       const owned = await salonDataService.fetchUserSalons(tempUser);
       if (owned.length > 0) {
         tempUser.ownedSalonIds = owned.map(s => s.id);
+        try {
+          if (email) {
+            localStorage.setItem(`wbs_active_salon_${email}`, owned[0].id);
+          }
+        } catch {}
       }
       await resolveSalonForUser(tempUser, owned);
     } finally {
@@ -232,6 +253,11 @@ export function App() {
 
   const handleLogout = async () => {
     lastAuthUserIdRef.current = null;
+    if (currentUser?.email) {
+      try {
+        localStorage.removeItem(`wbs_active_salon_${currentUser.email.trim().toLowerCase()}`);
+      } catch {}
+    }
     if (supabase) {
       await supabase.auth.signOut().catch(() => {});
     }
@@ -303,6 +329,12 @@ export function App() {
             ...prev,
             ownedSalonIds: [newSalon.id]
           } : null);
+          try {
+            const emailKey = (newSalon.owner_email || currentUser.email || '').trim().toLowerCase();
+            if (emailKey) {
+              localStorage.setItem(`wbs_active_salon_${emailKey}`, newSalon.id);
+            }
+          } catch {}
           salonDataService.setActiveSalonId(newSalon.id);
           setIsPickerActive(false);
           setActiveTab('dashboard');
