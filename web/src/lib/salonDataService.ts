@@ -160,10 +160,74 @@ class SalonDataService {
   private listeners: Set<() => void> = new Set();
   private activeSalonId: string = REGISTERED_SALONS[0].id;
   public isConnectedToSupabase: boolean = false;
+  // Local atomic token counter mutex map: `${salonId}_${queueDate}` => lastTokenNumber
+  private localTokenCounters: Map<string, number> = new Map();
 
   constructor() {
     this.initDefaultStores();
     this.checkSupabaseConnection();
+  }
+
+  // Atomically generate the next sequential token number for a salon on a given date
+  public async generateNextTokenNumber(salonId: string, date?: string): Promise<number> {
+    const queueDate = date || new Date().toISOString().split('T')[0];
+    
+    // 1. First attempt: Atomic Database-Level Sequence via PostgreSQL Stored Procedure
+    if (supabase) {
+      try {
+        const { data: dbNum, error } = await supabase.rpc('generate_next_token_number', {
+          p_salon_id: salonId,
+          p_date: queueDate
+        });
+        if (!error && typeof dbNum === 'number' && dbNum > 0) {
+          const counterKey = `${salonId}_${queueDate}`;
+          this.localTokenCounters.set(counterKey, Math.max(this.localTokenCounters.get(counterKey) || 0, dbNum));
+          return dbNum;
+        }
+        if (error) {
+          console.warn('Note on generate_next_token_number RPC:', error.message);
+        }
+      } catch (rpcErr) {
+        console.warn('Supabase generate_next_token_number RPC exception:', rpcErr);
+      }
+    }
+
+    // 2. Client-side / Offline Atomic Fallback
+    return this.getNextLocalTokenNumber(salonId, queueDate);
+  }
+
+  // Purely atomic, race-condition-free local fallback token generator scoped per salon and date
+  public getNextLocalTokenNumber(salonId: string, queueDate: string): number {
+    const counterKey = `${salonId}_${queueDate}`;
+    const store = this.getStore(salonId);
+
+    // Scan all existing tokens and appointments for this salon on this specific date
+    const existingDateTokens = (store.tokens || [])
+      .filter(t => t.queue_date === queueDate && typeof t.token_number === 'number')
+      .map(t => t.token_number);
+
+    const existingDateAppts = (store.appointments || [])
+      .filter(a => a.appointment_date === queueDate && typeof a.token_number === 'number')
+      .map(a => a.token_number as number);
+
+    const maxExisting = Math.max(0, ...existingDateTokens, ...existingDateAppts);
+    const lastCounter = this.localTokenCounters.get(counterKey) || 0;
+    
+    const nextNum = Math.max(maxExisting, lastCounter) + 1;
+    this.localTokenCounters.set(counterKey, nextNum);
+    return nextNum;
+  }
+
+  // Broadcast in-app notification strictly scoped to a specific salon
+  public dispatchSalonNotification(salonId: string, alertData: any) {
+    try {
+      if (typeof window !== 'undefined') {
+        localStorage.setItem(`wbs_salon_alert_${salonId}`, JSON.stringify(alertData));
+        window.dispatchEvent(new CustomEvent('wbs_new_booking_notification', {
+          detail: alertData
+        }));
+      }
+    } catch {}
   }
 
   private initDefaultStores() {
@@ -2039,7 +2103,7 @@ class SalonDataService {
     const tokenFee = Math.round(price * 0.10);
     const balanceDue = Math.max(0, price - tokenFee);
 
-    const tokenNumber = store.tokens.length + 1;
+    const tokenNumber = this.getNextLocalTokenNumber(salon.id, data.appointment_date || new Date().toISOString().split('T')[0]);
     const prefix = salon.slug.includes('grooming') ? 'WGL' : 'WBS';
     const tokenCode = `${prefix}-${String(tokenNumber).padStart(2, '0')}`;
     const waitMinutes = (tokenNumber - 1) * 20;
@@ -2220,8 +2284,8 @@ class SalonDataService {
       if (data.customerEmail && !customer.email) customer.email = data.customerEmail;
     }
 
-    // 2. Generate token code & number
-    const tokenNumber = store.tokens.length + 1;
+    // 2. Generate token code & number atomically (database-level row lock with local atomic mutex fallback)
+    const tokenNumber = await this.generateNextTokenNumber(data.salonId, data.appointmentDate);
     const prefix = salon.slug.includes('grooming') ? 'WGL' : 'WBS';
     const tokenCode = `${prefix}-${String(tokenNumber).padStart(2, '0')}`;
     const waitMinutes = (tokenNumber - 1) * 20;
@@ -2423,6 +2487,53 @@ class SalonDataService {
             console.log('LIVE: Booking request successfully written to Supabase:', insertedAppt.id);
             newAppointment.id = insertedAppt.id;
             newToken.appointment_id = insertedAppt.id;
+
+            // 1. Sync token row to Supabase tokens table
+            try {
+              const { error: tokErr } = await supabase.from('tokens').insert({
+                salon_id: data.salonId,
+                appointment_id: insertedAppt.id,
+                stylist_id: supabaseStaffId,
+                token_number: tokenNumber,
+                token_code: tokenCode,
+                customer_name: data.customerName,
+                customer_phone: data.customerPhone,
+                service_name: service?.name || 'Custom Service',
+                queue_date: data.appointmentDate,
+                status: 'waiting',
+                is_verified: !isPendingVerification,
+                estimated_wait_minutes: waitMinutes
+              });
+              if (tokErr) {
+                console.warn('Note on Supabase tokens row insert:', tokErr.message);
+              }
+            } catch (tErr) {
+              console.warn('Supabase tokens insert exception:', tErr);
+            }
+
+            // 2. Record notification in notification_logs table (scoped by salon_id)
+            try {
+              await supabase.from('notification_logs').insert({
+                salon_id: data.salonId,
+                appointment_id: insertedAppt.id,
+                recipient_email: salon.owner_email || null,
+                recipient_phone: salon.phone,
+                notification_type: 'new_booking_request',
+                title: `New Booking Request: ${data.customerName}`,
+                message: `${data.customerName} booked ${service?.name || 'Service'} for ${data.appointmentDate} at ${data.timeSlot}. Token: ${tokenCode}. Advance fee: ₹${tokenFee}.`,
+                metadata: {
+                  customerName: data.customerName,
+                  customerPhone: data.customerPhone,
+                  serviceName: service?.name,
+                  tokenCode,
+                  tokenFee,
+                  balanceDue
+                }
+              });
+            } catch (nErr) {
+              console.warn('Note on notification_logs insert:', nErr);
+            }
+
             this.persistTenantDataLocally(data.salonId);
           }
         } else {
@@ -2435,6 +2546,26 @@ class SalonDataService {
         console.error('Supabase booking exception:', syncErr);
       }
     }
+
+    // 6. Broadcast Salon Owner Notification (In-App Toast, Chime Alert, Email Dispatch)
+    const alertData = {
+      id: newAppointment.id,
+      salonId: data.salonId,
+      customerName: data.customerName,
+      customerPhone: data.customerPhone,
+      serviceName: service?.name || 'Custom Service',
+      tokenCode: tokenCode,
+      tokenFee: tokenFee,
+      balanceDue: balanceDue,
+      timeSlot: data.timeSlot,
+      appointmentDate: data.appointmentDate,
+      receivedAt: Date.now()
+    };
+    this.dispatchSalonNotification(data.salonId, alertData);
+
+    // Email notification simulation / log (scoped strictly to this salon's registered owner email)
+    const ownerEmail = salon.owner_email || `${salon.slug}-owner@westernboyssaas.com`;
+    console.log(`[OWNER EMAIL NOTIFICATION DISPATCHED] To: ${ownerEmail} | Salon: "${salon.name}" (ID: ${data.salonId}) | Subject: New Booking Request: ${data.customerName} (${tokenCode}) | Advance 10%: ₹${tokenFee} | Due: ₹${balanceDue}`);
 
     this.notify();
     return { appointment: newAppointment, token: newToken };

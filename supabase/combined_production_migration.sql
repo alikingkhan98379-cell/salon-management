@@ -228,6 +228,41 @@ ALTER TABLE appointments ALTER COLUMN service_id DROP NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_appointments_salon_date ON appointments(salon_id, appointment_date);
 CREATE INDEX IF NOT EXISTS idx_appointments_staff ON appointments(staff_id);
 
+-- Structural Unique Constraint: No two appointments in the same salon on the same date can share a token number
+CREATE UNIQUE INDEX IF NOT EXISTS uq_appointments_salon_date_token 
+ON appointments (salon_id, appointment_date, token_number)
+WHERE token_number IS NOT NULL;
+
+-- Atomic Daily Token Counter Table (Row-Level Locked)
+CREATE TABLE IF NOT EXISTS salon_daily_token_counters (
+    salon_id UUID NOT NULL REFERENCES salons(id) ON DELETE CASCADE,
+    queue_date DATE NOT NULL DEFAULT CURRENT_DATE,
+    last_token_number INT NOT NULL DEFAULT 0,
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    updated_at TIMESTAMPTZ DEFAULT NOW(),
+    PRIMARY KEY (salon_id, queue_date)
+);
+
+-- Atomic Token Number Generator Function (Zero race conditions under concurrency)
+CREATE OR REPLACE FUNCTION generate_next_token_number(p_salon_id UUID, p_date DATE DEFAULT CURRENT_DATE)
+RETURNS INT AS $$
+DECLARE
+    next_num INT;
+BEGIN
+    INSERT INTO salon_daily_token_counters (salon_id, queue_date, last_token_number)
+    VALUES (p_salon_id, p_date, 1)
+    ON CONFLICT (salon_id, queue_date)
+    DO UPDATE SET 
+        last_token_number = salon_daily_token_counters.last_token_number + 1,
+        updated_at = NOW()
+    RETURNING last_token_number INTO next_num;
+    
+    RETURN next_num;
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
+
+GRANT EXECUTE ON FUNCTION generate_next_token_number(UUID, DATE) TO anon, authenticated, service_role;
+
 -- Tokens
 CREATE TABLE IF NOT EXISTS tokens (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
@@ -251,8 +286,26 @@ CREATE TABLE IF NOT EXISTS tokens (
     UNIQUE(salon_id, queue_date, token_number)
 );
 
+CREATE UNIQUE INDEX IF NOT EXISTS uq_tokens_salon_date_number ON tokens(salon_id, queue_date, token_number);
 CREATE INDEX IF NOT EXISTS idx_tokens_salon_date ON tokens(salon_id, queue_date, status);
 CREATE INDEX IF NOT EXISTS idx_tokens_code ON tokens(token_code);
+
+-- Notification Logs (Salon Scoped)
+CREATE TABLE IF NOT EXISTS notification_logs (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    salon_id UUID NOT NULL REFERENCES salons(id) ON DELETE CASCADE,
+    appointment_id UUID REFERENCES appointments(id) ON DELETE CASCADE,
+    recipient_email VARCHAR(255),
+    recipient_phone VARCHAR(20),
+    notification_type VARCHAR(50) NOT NULL,
+    title VARCHAR(255) NOT NULL,
+    message TEXT NOT NULL,
+    metadata JSONB DEFAULT '{}'::jsonb,
+    is_read BOOLEAN DEFAULT FALSE,
+    created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_notifications_salon ON notification_logs(salon_id, created_at DESC);
 
 -- Inventory
 CREATE TABLE IF NOT EXISTS inventory (
@@ -338,6 +391,14 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql SECURITY DEFINER;
 
+-- Security Definer helper to prevent infinite recursion in profiles RLS
+CREATE OR REPLACE FUNCTION get_manager_salon_ids()
+RETURNS TABLE (salon_id UUID) AS $$
+BEGIN
+    RETURN QUERY SELECT p.salon_id FROM profiles p WHERE p.auth_user_id = auth.uid() AND p.role = 'manager' AND p.is_active = true;
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
+
 -- 6. ROW LEVEL SECURITY (RLS) POLICIES
 
 -- Salons Table RLS
@@ -392,20 +453,20 @@ FOR ALL USING (
 DROP POLICY IF EXISTS "managers_view_salon_team" ON profiles;
 CREATE POLICY "managers_view_salon_team" ON profiles 
 FOR SELECT USING (
-    salon_id IN (SELECT salon_id FROM profiles WHERE auth_user_id = auth.uid() AND role = 'manager' AND is_active = true)
+    salon_id IN (SELECT get_manager_salon_ids())
 );
 
 DROP POLICY IF EXISTS "managers_insert_staff" ON profiles;
 CREATE POLICY "managers_insert_staff" ON profiles 
 FOR INSERT WITH CHECK (
-    salon_id IN (SELECT salon_id FROM profiles WHERE auth_user_id = auth.uid() AND role = 'manager' AND is_active = true)
+    salon_id IN (SELECT get_manager_salon_ids())
     AND role = 'staff'
 );
 
 DROP POLICY IF EXISTS "managers_update_staff" ON profiles;
 CREATE POLICY "managers_update_staff" ON profiles 
 FOR UPDATE USING (
-    salon_id IN (SELECT salon_id FROM profiles WHERE auth_user_id = auth.uid() AND role = 'manager' AND is_active = true)
+    salon_id IN (SELECT get_manager_salon_ids())
     AND role = 'staff'
 ) WITH CHECK (role = 'staff');
 
@@ -496,6 +557,30 @@ FOR INSERT WITH CHECK (true);
 DROP POLICY IF EXISTS "audit_logs_super_admin_select" ON admin_audit_logs;
 CREATE POLICY "audit_logs_super_admin_select" ON admin_audit_logs 
 FOR SELECT USING (true);
+
+-- Salon Daily Token Counters RLS
+ALTER TABLE salon_daily_token_counters ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS "public_token_counters_select" ON salon_daily_token_counters;
+CREATE POLICY "public_token_counters_select" ON salon_daily_token_counters 
+FOR SELECT USING (true);
+
+DROP POLICY IF EXISTS "public_token_counters_all" ON salon_daily_token_counters;
+CREATE POLICY "public_token_counters_all" ON salon_daily_token_counters 
+FOR ALL USING (true) WITH CHECK (true);
+
+-- Notification Logs RLS (Strict Salon Scoping)
+ALTER TABLE notification_logs ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS "notification_logs_public_insert" ON notification_logs;
+CREATE POLICY "notification_logs_public_insert" ON notification_logs 
+FOR INSERT WITH CHECK (true);
+
+DROP POLICY IF EXISTS "notification_logs_salon_scope" ON notification_logs;
+CREATE POLICY "notification_logs_salon_scope" ON notification_logs 
+FOR SELECT USING (
+    salon_id IN (SELECT get_user_salon_ids())
+);
 
 -- 7. Private Supabase Storage Bucket & Storage RLS
 INSERT INTO storage.buckets (id, name, public, file_size_limit, allowed_mime_types)

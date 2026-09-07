@@ -1,41 +1,8 @@
 import { salonDataService, REGISTERED_SALONS } from './salonDataService';
 import { Salon, Profile, Service, Customer, Appointment, Token, InventoryItem, Invoice, NotificationLog } from '../types';
 
-// Web Audio Chime generator for "Now Serving" alerts
-export const playCallChime = () => {
-  try {
-    const AudioContext = window.AudioContext || (window as unknown as { webkitAudioContext: typeof window.AudioContext }).webkitAudioContext;
-    if (!AudioContext) return;
-    const ctx = new AudioContext();
-
-    const now = ctx.currentTime;
-    const osc1 = ctx.createOscillator();
-    const osc2 = ctx.createOscillator();
-    const gainNode = ctx.createGain();
-
-    osc1.type = 'sine';
-    osc1.frequency.setValueAtTime(523.25, now); // C5
-    osc1.frequency.exponentialRampToValueAtTime(659.25, now + 0.25); // E5
-
-    osc2.type = 'triangle';
-    osc2.frequency.setValueAtTime(659.25, now + 0.25);
-    osc2.frequency.exponentialRampToValueAtTime(783.99, now + 0.55); // G5
-
-    gainNode.gain.setValueAtTime(0.3, now);
-    gainNode.gain.exponentialRampToValueAtTime(0.001, now + 0.9);
-
-    osc1.connect(gainNode);
-    osc2.connect(gainNode);
-    gainNode.connect(ctx.destination);
-
-    osc1.start(now);
-    osc1.stop(now + 0.3);
-    osc2.start(now + 0.25);
-    osc2.stop(now + 0.9);
-  } catch (e) {
-    console.warn('Audio chime could not play:', e);
-  }
-};
+import { playNewBookingChime, playCallChime } from './soundUtils';
+export { playNewBookingChime, playCallChime };
 
 class StoreBridge {
   public subscribe(listener: () => void): () => void {

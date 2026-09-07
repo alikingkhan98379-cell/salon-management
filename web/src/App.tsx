@@ -21,8 +21,10 @@ import { SubscriptionExpiredGate } from './components/SubscriptionExpiredGate';
 import { PaymentVerificationManager } from './components/PaymentVerificationManager';
 import { ManageStaffScreen } from './components/ManageStaffScreen';
 import { InactivityModal } from './components/InactivityModal';
+import { NewBookingNotificationToast, BookingAlertData } from './components/NewBookingNotificationToast';
 import { salonDataService, REGISTERED_SALONS } from './lib/salonDataService';
 import { salonStore } from './lib/mockStore';
+import { playNewBookingChime } from './lib/soundUtils';
 import { supabase } from './lib/supabaseClient';
 import { UserRole, Salon } from './types';
 import { Scissors, ShieldCheck, Wifi, AlertTriangle, Clock, X } from 'lucide-react';
@@ -50,6 +52,11 @@ export function App() {
   // Navigation State
   const [activeTab, setActiveTab] = useState<string>('dashboard');
   const [trackingTokenCode, setTrackingTokenCode] = useState<string>('WBS-02');
+
+  // Active Salon & Root In-App Notifications
+  const activeSalon = selectedSalon || salonDataService.getActiveSalon();
+  const [activeBookingNotification, setActiveBookingNotification] = useState<BookingAlertData | null>(null);
+  const [pendingCount, setPendingCount] = useState<number>(0);
 
   // Stability Guards to eliminate repeated refresh/re-render loops
   const lastAuthUserIdRef = useRef<string | null>(null);
@@ -103,6 +110,137 @@ export function App() {
       setActiveTab('dashboard');
     }
   }, [currentUser?.role, activeTab]);
+
+  // Synchronize pending verifications count for active salon
+  const updatePendingCount = async (salonId: string) => {
+    try {
+      const list = await salonDataService.fetchPendingVerifications(salonId);
+      setPendingCount(list.length);
+    } catch {
+      setPendingCount(salonDataService.getPendingVerifications(salonId).length);
+    }
+  };
+
+  // ---------------------------------------------------------------------------
+  // 4. ROOT-LEVEL REALTIME BOOKING NOTIFICATIONS & CHIME (Salon Owner & Manager)
+  // ---------------------------------------------------------------------------
+  useEffect(() => {
+    if (!currentUser || !activeSalon) return;
+    if (currentUser.role !== 'salon_owner' && currentUser.role !== 'manager' && currentUser.role !== 'super_admin') {
+      return;
+    }
+
+    const currentSalonId = activeSalon.id;
+
+    // Initial fetch of pending count
+    updatePendingCount(currentSalonId);
+
+    const handleIncomingBooking = (alertPayload: BookingAlertData) => {
+      // Security Check: Strictly ensure incoming booking is for this specific salon!
+      if (alertPayload.salonId !== currentSalonId) return;
+
+      // 1. Play audible Web Audio chime
+      playNewBookingChime();
+
+      // 2. Trigger notification toast
+      setActiveBookingNotification(alertPayload);
+
+      // 3. Update pending count immediately
+      updatePendingCount(currentSalonId);
+    };
+
+    // 1. Listen to Supabase Realtime changes on appointments table
+    let channel: any = null;
+    if (supabase) {
+      channel = supabase.channel(`salon-owner-realtime-alerts-${currentSalonId}`)
+        .on('postgres_changes', {
+          event: 'INSERT',
+          schema: 'public',
+          table: 'appointments',
+          filter: `salon_id=eq.${currentSalonId}`
+        }, (payload: any) => {
+          if (payload.new && payload.new.salon_id === currentSalonId) {
+            let parsedNotes: any = {};
+            try {
+              if (payload.new.notes) parsedNotes = JSON.parse(payload.new.notes);
+            } catch {}
+
+            const alertData: BookingAlertData = {
+              id: payload.new.id,
+              salonId: payload.new.salon_id,
+              customerName: payload.new.customer_name || parsedNotes.customer_name || 'Customer',
+              customerPhone: payload.new.customer_phone || parsedNotes.customer_phone,
+              serviceName: payload.new.service_name || parsedNotes.service_name || 'Custom Service',
+              tokenCode: payload.new.token_code || parsedNotes.token_code || 'WBS-REQ',
+              tokenFee: payload.new.amount || parsedNotes.token_fee || 25,
+              balanceDue: payload.new.balance_due || parsedNotes.balance_due || 0,
+              timeSlot: payload.new.time_slot,
+              appointmentDate: payload.new.appointment_date,
+              receivedAt: Date.now()
+            };
+            handleIncomingBooking(alertData);
+          }
+        })
+        .subscribe();
+    }
+
+    // 2. Listen to cross-window and in-app custom event
+    const onCustomNotification = (e: CustomEvent<BookingAlertData>) => {
+      if (e.detail && e.detail.salonId === currentSalonId) {
+        handleIncomingBooking(e.detail);
+      }
+    };
+
+    const onApptCreated = (e: CustomEvent<any>) => {
+      if (e.detail && e.detail.salonId === currentSalonId) {
+        const appt = e.detail.appointment;
+        const alertData: BookingAlertData = {
+          id: appt.id,
+          salonId: e.detail.salonId,
+          customerName: appt.customer_name || 'Customer',
+          customerPhone: appt.customer_phone,
+          serviceName: appt.service_name || 'Service',
+          tokenCode: appt.token_code || 'WBS',
+          tokenFee: appt.token_fee || appt.amount || 25,
+          balanceDue: appt.balance_due || 0,
+          timeSlot: appt.time_slot,
+          appointmentDate: appt.appointment_date,
+          receivedAt: Date.now()
+        };
+        handleIncomingBooking(alertData);
+      }
+    };
+
+    const onStorage = (e: StorageEvent) => {
+      if (e.key === `wbs_salon_alert_${currentSalonId}` && e.newValue) {
+        try {
+          const parsed = JSON.parse(e.newValue);
+          if (parsed && parsed.salonId === currentSalonId) {
+            handleIncomingBooking(parsed);
+          }
+        } catch {}
+      }
+    };
+
+    window.addEventListener('wbs_new_booking_notification' as any, onCustomNotification);
+    window.addEventListener('wbs_appointment_created' as any, onApptCreated);
+    window.addEventListener('storage', onStorage);
+
+    // Heartbeat fallback to check pending verifications every 6 seconds
+    const interval = setInterval(() => {
+      updatePendingCount(currentSalonId);
+    }, 6000);
+
+    return () => {
+      if (channel && supabase) {
+        supabase.removeChannel(channel);
+      }
+      window.removeEventListener('wbs_new_booking_notification' as any, onCustomNotification);
+      window.removeEventListener('wbs_appointment_created' as any, onApptCreated);
+      window.removeEventListener('storage', onStorage);
+      clearInterval(interval);
+    };
+  }, [currentUser?.role, activeSalon?.id]);
 
   const handleAuthenticatedUser = async (user: { id: string; email?: string; user_metadata?: { full_name?: string } }) => {
     if (isResolvingRef.current) return;
@@ -543,8 +681,6 @@ export function App() {
     );
   }
 
-  const activeSalon = selectedSalon || salonDataService.getActiveSalon();
-
   // ---------------------------------------------------------------------------
   // SUBSCRIPTION EXPIRED GATE: Salons with expired subscription gated for owner
   // ---------------------------------------------------------------------------
@@ -575,6 +711,16 @@ export function App() {
   return (
     <div className="min-h-screen bg-[#0B0F19] text-slate-100 flex flex-col font-sans selection:bg-amber-500 selection:text-black">
       
+      {/* Real-time Salon Booking Notification Toast */}
+      <NewBookingNotificationToast
+        notification={activeBookingNotification}
+        onReview={(appointmentId) => {
+          setActiveTab('verifications');
+          setActiveBookingNotification(null);
+        }}
+        onDismiss={() => setActiveBookingNotification(null)}
+      />
+
       {/* Top Navigation */}
       <Navbar
         currentRole={currentUser.role}
@@ -587,7 +733,7 @@ export function App() {
         activeSalon={activeSalon}
         currentServingToken={currentlyServing ? currentlyServing.token_code : undefined}
         waitingCount={waitingTokens.length}
-        pendingVerificationsCount={pendingVerificationsCount}
+        pendingVerificationsCount={Math.max(pendingCount, pendingVerificationsCount)}
       />
 
       {/* Main Content Area */}
