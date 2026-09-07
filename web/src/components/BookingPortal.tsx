@@ -60,6 +60,8 @@ export const BookingPortal: React.FC<BookingPortalProps> = ({ onNavigateToTrack 
   const currentPrice = selectedService 
     ? (serviceType === 'home_service' ? selectedService.home_service_price : selectedService.in_salon_price)
     : 0;
+  const tokenFee = Math.round(currentPrice * 0.10);
+  const balanceDue = Math.max(0, currentPrice - tokenFee);
 
   const handleStartBooking = (e: React.FormEvent) => {
     e.preventDefault();
@@ -433,13 +435,20 @@ export const BookingPortal: React.FC<BookingPortalProps> = ({ onNavigateToTrack 
 
             {/* Price Summary & Checkout Action */}
             <div className="bg-slate-800/70 border border-slate-700 rounded-2xl p-5 flex flex-col sm:flex-row items-center justify-between gap-4">
-              <div>
-                <span className="text-xs text-slate-400">Total Payable:</span>
-                <div className="flex items-baseline space-x-2">
-                  <span className="text-2xl font-black font-mono text-white">₹{currentPrice}</span>
-                  <span className="text-xs text-slate-400">
-                    ({serviceType === 'home_service' ? 'Doorstep Visit' : 'In-Salon Visit'})
-                  </span>
+              <div className="space-y-1">
+                <div className="text-xs text-slate-400 flex items-center gap-2">
+                  <span>Full Service: <strong className="text-slate-200">₹{currentPrice}</strong></span>
+                  <span>•</span>
+                  <span>Balance at Salon: <strong className="text-slate-200">₹{balanceDue}</strong></span>
+                </div>
+                <div>
+                  <span className="text-xs font-bold text-amber-400 uppercase">Token Confirmation Fee (10% Advance):</span>
+                  <div className="flex items-baseline space-x-2">
+                    <span className="text-3xl font-black font-mono text-amber-400">₹{tokenFee}</span>
+                    <span className="text-xs text-slate-400">
+                      ({serviceType === 'home_service' ? 'Doorstep Visit' : 'In-Salon Visit'})
+                    </span>
+                  </div>
                 </div>
               </div>
 
@@ -447,7 +456,7 @@ export const BookingPortal: React.FC<BookingPortalProps> = ({ onNavigateToTrack 
                 type="submit"
                 className="w-full sm:w-auto px-8 py-3.5 bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 hover:to-amber-500 text-slate-950 font-bold text-sm rounded-xl shadow-xl shadow-amber-500/20 transition flex items-center justify-center space-x-2 cursor-pointer"
               >
-                <span>Proceed to Payment & Token</span>
+                <span>Pay ₹{tokenFee} Token Fee &amp; Reserve</span>
                 <ArrowRight className="w-4 h-4" />
               </button>
             </div>
@@ -457,8 +466,8 @@ export const BookingPortal: React.FC<BookingPortalProps> = ({ onNavigateToTrack 
           {/* Razorpay Modal Trigger */}
           {showPaymentModal && selectedService && (
             <MockRazorpayModal
-              amount={currentPrice}
-              serviceName={selectedService.name}
+              amount={tokenFee}
+              serviceName={`${selectedService.name} (10% Token Fee)`}
               customerName={customerName}
               customerPhone={customerPhone}
               onSuccess={handlePaymentSuccess}

@@ -17,6 +17,7 @@ import {
   QrCode
 } from 'lucide-react';
 import { salonDataService } from '../lib/salonDataService';
+import { supabase } from '../lib/supabaseClient';
 import { Appointment } from '../types';
 
 interface PaymentVerificationManagerProps {
@@ -36,15 +37,73 @@ export const PaymentVerificationManager: React.FC<PaymentVerificationManagerProp
   const [isProcessing, setIsProcessing] = useState<boolean>(false);
   const [searchQuery, setSearchQuery] = useState<string>('');
 
-  const loadPending = () => {
-    const list = salonDataService.getPendingVerifications(salonId);
-    setAppointments(list);
+  const loadPending = async () => {
+    try {
+      const list = await salonDataService.fetchPendingVerifications(salonId);
+      setAppointments(list);
+    } catch (err) {
+      console.warn('Error loading pending verifications:', err);
+    }
   };
 
   useEffect(() => {
+    const targetSalonId = salonId || salonDataService.getActiveSalon().id;
     loadPending();
+
+    // 1. In-memory store mutations listener
     const unsub = salonDataService.subscribe(loadPending);
-    return () => unsub();
+
+    // 2. Cross-tab storage listener
+    const handleStorageChange = (e: StorageEvent) => {
+      if (e.key === 'wbs_last_booking_event' || e.key?.startsWith('wbs_tenant_data_')) {
+        loadPending();
+      }
+    };
+    window.addEventListener('storage', handleStorageChange);
+
+    // 3. Same-window custom events
+    const handleCustomEvent = () => {
+      loadPending();
+    };
+    window.addEventListener('wbs_appointment_created', handleCustomEvent);
+    window.addEventListener('wbs_appointment_updated', handleCustomEvent);
+
+    // 4. Supabase Realtime channel for instant multi-device / network updates
+    let channel: any = null;
+    if (supabase) {
+      channel = supabase
+        .channel(`realtime-pending-${targetSalonId}`)
+        .on(
+          'postgres_changes',
+          {
+            event: '*',
+            schema: 'public',
+            table: 'appointments',
+            filter: `salon_id=eq.${targetSalonId}`
+          },
+          (payload) => {
+            console.log('⚡ Realtime appointment update received:', payload);
+            loadPending();
+          }
+        )
+        .subscribe();
+    }
+
+    // 5. Polling fallback every 4 seconds to guarantee fresh data
+    const pollInterval = setInterval(() => {
+      loadPending();
+    }, 4000);
+
+    return () => {
+      unsub();
+      window.removeEventListener('storage', handleStorageChange);
+      window.removeEventListener('wbs_appointment_created', handleCustomEvent);
+      window.removeEventListener('wbs_appointment_updated', handleCustomEvent);
+      if (channel && supabase) {
+        supabase.removeChannel(channel);
+      }
+      clearInterval(pollInterval);
+    };
   }, [salonId]);
 
   // Resolve private storage paths to signed URLs
@@ -170,19 +229,33 @@ export const PaymentVerificationManager: React.FC<PaymentVerificationManagerProp
                   #{appt.token_code || 'TKN'}
                 </div>
 
-                <div className="space-y-1">
-                  <div className="flex items-center gap-2">
+                <div className="space-y-1.5 flex-1">
+                  <div className="flex flex-wrap items-center gap-2">
                     <h4 className="text-base font-bold text-white">{appt.customer_name}</h4>
-                    <span className="px-2 py-0.5 rounded-full bg-amber-500/10 text-amber-300 border border-amber-500/20 text-[10px] font-bold">
-                      ₹{appt.amount}
+                    {appt.salon_name && (
+                      <span className="px-2.5 py-0.5 rounded-full bg-slate-800 text-amber-300 border border-slate-700 text-[10px] font-semibold flex items-center gap-1">
+                        📍 {appt.salon_name}
+                      </span>
+                    )}
+                    <span className="px-2 py-0.5 rounded-full bg-amber-500/15 text-amber-400 border border-amber-500/30 text-[10px] font-bold">
+                      Token Fee: ₹{appt.token_fee || appt.amount} (10% Advance)
                     </span>
                     <span className="text-[10px] text-rose-400 bg-rose-500/10 px-2 py-0.5 rounded-full border border-rose-500/20 font-semibold">
-                      Payment Pending
+                      Payment Verification Pending
                     </span>
                   </div>
 
                   <div className="text-xs text-amber-300 font-medium">
                     {appt.service_name}
+                  </div>
+
+                  {/* 10% vs Full Service Breakdown */}
+                  <div className="flex flex-wrap items-center gap-3 text-[11px] text-slate-400 pt-0.5 bg-slate-950/60 px-3 py-1.5 rounded-xl border border-slate-800/80 w-fit">
+                    <span>Full Service Cost: <strong className="text-slate-200 font-mono">₹{appt.full_service_price || Math.round((appt.amount || 0) * 10)}</strong></span>
+                    <span className="text-slate-600">•</span>
+                    <span>Advance Paid (10%): <strong className="text-emerald-400 font-mono">₹{appt.token_fee || appt.amount}</strong></span>
+                    <span className="text-slate-600">•</span>
+                    <span>Balance Due at Salon: <strong className="text-amber-300 font-mono">₹{(appt.full_service_price || Math.round((appt.amount || 0) * 10)) - (appt.token_fee || appt.amount)}</strong></span>
                   </div>
 
                   <div className="flex flex-wrap items-center gap-3 text-[11px] text-slate-400 pt-1">

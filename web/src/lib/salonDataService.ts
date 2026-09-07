@@ -1027,7 +1027,8 @@ class SalonDataService {
   // Payment Screenshot Verification Flows
   public async verifyPayment(appointmentId: string, staffId?: string): Promise<boolean> {
     let found = false;
-    for (const [_, store] of this.tenantData.entries()) {
+    let targetSalonId: string | null = null;
+    for (const [sId, store] of this.tenantData.entries()) {
       const appt = store.appointments.find(a => a.id === appointmentId);
       if (appt) {
         appt.payment_status = 'completed';
@@ -1035,11 +1036,13 @@ class SalonDataService {
         appt.payment_verified_at = new Date().toISOString();
         if (staffId) appt.payment_verified_by = staffId;
 
-        const tok = store.tokens.find(t => t.appointment_id === appointmentId);
+        const tok = store.tokens.find(t => t.appointment_id === appointmentId || t.id === appointmentId);
         if (tok) {
           tok.is_verified = true;
           tok.status = 'waiting';
         }
+        targetSalonId = sId;
+        this.persistTenantDataLocally(sId);
         found = true;
         break;
       }
@@ -1057,23 +1060,36 @@ class SalonDataService {
       }
     }
 
+    try {
+      localStorage.setItem('wbs_last_booking_event', JSON.stringify({
+        action: 'verified',
+        apptId: appointmentId,
+        salonId: targetSalonId,
+        timestamp: Date.now()
+      }));
+      window.dispatchEvent(new CustomEvent('wbs_appointment_updated'));
+    } catch {}
+
     this.notify();
     return found;
   }
 
   public async rejectPayment(appointmentId: string, reason: string): Promise<boolean> {
     let found = false;
-    for (const [_, store] of this.tenantData.entries()) {
+    let targetSalonId: string | null = null;
+    for (const [sId, store] of this.tenantData.entries()) {
       const appt = store.appointments.find(a => a.id === appointmentId);
       if (appt) {
         appt.payment_status = 'failed';
         appt.status = 'cancelled';
         appt.rejection_reason = reason;
 
-        const tok = store.tokens.find(t => t.appointment_id === appointmentId);
+        const tok = store.tokens.find(t => t.appointment_id === appointmentId || t.id === appointmentId);
         if (tok) {
           tok.status = 'skipped';
         }
+        targetSalonId = sId;
+        this.persistTenantDataLocally(sId);
         found = true;
         break;
       }
@@ -1091,15 +1107,136 @@ class SalonDataService {
       }
     }
 
+    try {
+      localStorage.setItem('wbs_last_booking_event', JSON.stringify({
+        action: 'rejected',
+        apptId: appointmentId,
+        salonId: targetSalonId,
+        timestamp: Date.now()
+      }));
+      window.dispatchEvent(new CustomEvent('wbs_appointment_updated'));
+    } catch {}
+
     this.notify();
     return found;
+  }
+
+  // Asynchronously query Supabase and sync local store for pending bookings
+  public async fetchPendingVerifications(salonId?: string): Promise<Appointment[]> {
+    const id = salonId || this.activeSalonId;
+    const store = this.getStore(id);
+
+    // 1. Reload any localStorage updates from other tabs
+    try {
+      if (typeof window !== 'undefined' && window.localStorage) {
+        const savedStore = localStorage.getItem('wbs_tenant_data_' + id);
+        if (savedStore) {
+          const parsed = JSON.parse(savedStore);
+          if (parsed && Array.isArray(parsed.appointments)) {
+            parsed.appointments.forEach((localAppt: Appointment) => {
+              const idx = store.appointments.findIndex(a => a.id === localAppt.id);
+              if (idx >= 0) {
+                store.appointments[idx] = { ...store.appointments[idx], ...localAppt };
+              } else {
+                store.appointments.unshift(localAppt);
+              }
+            });
+          }
+        }
+      }
+    } catch {}
+
+    // 2. Query live Supabase appointments table
+    if (supabase) {
+      try {
+        const { data: remoteAppts, error } = await supabase
+          .from('appointments')
+          .select('*')
+          .eq('salon_id', id)
+          .or('payment_status.eq.pending,status.eq.pending')
+          .order('created_at', { ascending: false });
+
+        if (error) {
+          console.warn('Supabase fetchPendingVerifications query error:', error);
+        } else if (remoteAppts) {
+          const salon = this.allSalonsCache.find(s => s.id === id) || this.getActiveSalon();
+          remoteAppts.forEach((remote: any) => {
+            let parsedNotes: any = {};
+            try {
+              if (remote.notes && typeof remote.notes === 'string') {
+                parsedNotes = JSON.parse(remote.notes);
+              }
+            } catch {}
+
+            const fullPrice = remote.full_service_price || parsedNotes.full_service_price || Math.round((remote.amount || 0) * 10);
+            const tokenFee = remote.token_fee || parsedNotes.token_fee || remote.amount || Math.round(fullPrice * 0.10);
+            const balanceDue = remote.balance_due || parsedNotes.balance_due || Math.max(0, fullPrice - tokenFee);
+
+            const mapped: Appointment = {
+              id: remote.id,
+              salon_id: remote.salon_id,
+              salon_name: salon.name,
+              customer_id: remote.customer_id,
+              customer_name: remote.customer_name || parsedNotes.customer_name || 'Valued Customer',
+              customer_phone: remote.customer_phone || parsedNotes.customer_phone || '',
+              customer_email: remote.customer_email || parsedNotes.customer_email || '',
+              staff_id: remote.staff_id,
+              staff_name: remote.staff_name || parsedNotes.staff_name || 'Selected Stylist',
+              service_id: remote.service_id,
+              service_name: remote.service_name || parsedNotes.service_name || 'Hair & Grooming Service',
+              service_type: remote.service_type || 'in_salon',
+              booking_channel: remote.booking_channel || 'web',
+              appointment_date: remote.appointment_date,
+              time_slot: remote.time_slot,
+              status: remote.status,
+              amount: tokenFee,
+              full_service_price: fullPrice,
+              token_fee: tokenFee,
+              balance_due: balanceDue,
+              payment_status: remote.payment_status,
+              payment_gateway: remote.payment_gateway || 'upi',
+              payment_screenshot_url: remote.payment_screenshot_url || parsedNotes.payment_screenshot_url || remote.transaction_ref || null,
+              token_code: remote.token_code || parsedNotes.token_code || `WBS-${remote.id.slice(0, 4).toUpperCase()}`,
+              token_number: remote.token_number || parsedNotes.token_number || 1,
+              notes: remote.notes,
+              created_at: remote.created_at
+            };
+
+            const existingIdx = store.appointments.findIndex(a => a.id === mapped.id);
+            if (existingIdx >= 0) {
+              const existing = store.appointments[existingIdx];
+              // Don't overwrite if local state is already confirmed, completed, or cancelled
+              if (existing.status === 'confirmed' || existing.status === 'completed' || existing.status === 'cancelled' || existing.payment_status === 'completed') {
+                return;
+              }
+              store.appointments[existingIdx] = mapped;
+            } else {
+              store.appointments.unshift(mapped);
+            }
+          });
+          this.persistTenantDataLocally(id);
+        }
+      } catch (err) {
+        console.warn('Exception in fetchPendingVerifications:', err);
+      }
+    }
+
+    return store.appointments.filter(a => 
+      (a.payment_status === 'pending' || a.status === 'pending') &&
+      a.status !== 'confirmed' &&
+      a.payment_status !== 'completed' &&
+      a.status !== 'cancelled'
+    );
   }
 
   public getPendingVerifications(salonId?: string): Appointment[] {
     const id = salonId || this.activeSalonId;
     const store = this.getStore(id);
     return store.appointments.filter(a => 
-      a.payment_status === 'pending' || a.status === 'pending'
+      (a.payment_status === 'pending' || a.status === 'pending') &&
+      a.status !== 'confirmed' &&
+      a.payment_status !== 'completed' &&
+      a.status !== 'cancelled'
     );
   }
 
@@ -1899,6 +2036,8 @@ class SalonDataService {
     const salon = this.getActiveSalon();
     const service = store.services.find(s => s.id === data.service_id);
     const price = service ? (data.service_type === 'home_service' ? service.home_service_price : service.in_salon_price) : 250;
+    const tokenFee = Math.round(price * 0.10);
+    const balanceDue = Math.max(0, price - tokenFee);
 
     const tokenNumber = store.tokens.length + 1;
     const prefix = salon.slug.includes('grooming') ? 'WGL' : 'WBS';
@@ -1923,6 +2062,9 @@ class SalonDataService {
       time_slot: data.time_slot,
       status: 'confirmed',
       amount: price,
+      full_service_price: price,
+      token_fee: tokenFee,
+      balance_due: balanceDue,
       payment_status: data.payment_status || 'completed',
       payment_gateway: data.payment_gateway || 'mock_razorpay',
       token_number: tokenNumber,
@@ -2050,11 +2192,13 @@ class SalonDataService {
     const service = store.services.find(s => s.id === data.serviceId);
     const staff = store.staff.find(st => st.id === data.staffId) || store.staff[0];
 
-    const price = service 
+    const fullServicePrice = service 
       ? (data.serviceType === 'home_service' ? service.home_service_price : service.in_salon_price)
       : 250;
+    const tokenFee = Math.round(fullServicePrice * 0.10);
+    const balanceDue = Math.max(0, fullServicePrice - tokenFee);
 
-    // 1. Find or create customer
+    // 1. Find or create customer in local memory
     let customer = store.customers.find(c => c.phone === data.customerPhone);
     if (!customer) {
       customer = {
@@ -2065,13 +2209,13 @@ class SalonDataService {
         email: data.customerEmail,
         allergy_notes: data.allergyNotes,
         total_visits: 1,
-        total_spent: price,
+        total_spent: tokenFee,
         created_at: new Date().toISOString(),
       };
       store.customers.push(customer);
     } else {
       customer.total_visits += 1;
-      customer.total_spent += price;
+      customer.total_spent += tokenFee;
       if (data.allergyNotes) customer.allergy_notes = data.allergyNotes;
       if (data.customerEmail && !customer.email) customer.email = data.customerEmail;
     }
@@ -2082,7 +2226,7 @@ class SalonDataService {
     const tokenCode = `${prefix}-${String(tokenNumber).padStart(2, '0')}`;
     const waitMinutes = (tokenNumber - 1) * 20;
 
-    const isPendingVerification = Boolean(data.paymentScreenshotUrl);
+    const isPendingVerification = Boolean(data.paymentScreenshotUrl) || data.paymentGateway === 'upi';
 
     // 3. Create appointment
     const apptId = `appt-${Date.now()}`;
@@ -2093,6 +2237,7 @@ class SalonDataService {
       customer_id: customer.id,
       customer_name: data.customerName,
       customer_phone: data.customerPhone,
+      customer_email: data.customerEmail,
       staff_id: staff?.id,
       staff_name: staff?.full_name || 'Selected Stylist',
       service_id: data.serviceId,
@@ -2102,7 +2247,10 @@ class SalonDataService {
       appointment_date: data.appointmentDate,
       time_slot: data.timeSlot,
       status: isPendingVerification ? 'pending' : 'confirmed',
-      amount: price,
+      amount: tokenFee, // Strictly 10% token confirmation fee
+      full_service_price: fullServicePrice,
+      token_fee: tokenFee,
+      balance_due: balanceDue,
       payment_status: isPendingVerification ? 'pending' : 'completed',
       payment_gateway: data.paymentGateway,
       payment_screenshot_url: data.paymentScreenshotUrl,
@@ -2132,28 +2280,160 @@ class SalonDataService {
       created_at: new Date().toISOString(),
     };
 
-    store.appointments.push(newAppointment);
-    store.tokens.push(newToken);
+    store.appointments.unshift(newAppointment);
+    store.tokens.unshift(newToken);
 
-    // Try live Supabase sync
+    // Save to localStorage immediately for instant cross-tab visibility
+    this.persistTenantDataLocally(data.salonId);
+
+    try {
+      localStorage.setItem('wbs_last_booking_event', JSON.stringify({
+        action: 'created',
+        salonId: data.salonId,
+        apptId,
+        tokenCode,
+        timestamp: Date.now()
+      }));
+      window.dispatchEvent(new CustomEvent('wbs_appointment_created', {
+        detail: { salonId: data.salonId, appointment: newAppointment, token: newToken }
+      }));
+    } catch {}
+
+    // 5. Robust Supabase Live Database Sync
     if (supabase) {
-      Promise.resolve(
-        supabase.from('appointments').insert({
-          salon_id: data.salonId,
-          customer_id: customer.id,
-          staff_id: staff?.id,
-          service_id: data.serviceId,
-          service_type: data.serviceType,
-          booking_channel: data.bookingChannel,
-          appointment_date: data.appointmentDate,
-          time_slot: data.timeSlot,
-          status: 'confirmed',
-          amount: price,
-          payment_status: 'completed',
-          payment_gateway: data.paymentGateway,
-          home_service_address: data.homeAddress
-        })
-      ).catch((err: any) => console.warn('Supabase appt insert fallback:', err));
+      try {
+        // Step A: Ensure customer exists in Supabase to get valid UUID
+        let supabaseCustomerId: string | null = null;
+        try {
+          const { data: existingCust } = await supabase
+            .from('customers')
+            .select('id')
+            .eq('salon_id', data.salonId)
+            .eq('phone', data.customerPhone)
+            .maybeSingle();
+
+          if (existingCust?.id) {
+            supabaseCustomerId = existingCust.id;
+          } else {
+            const { data: createdCust, error: custErr } = await supabase
+              .from('customers')
+              .insert({
+                salon_id: data.salonId,
+                name: data.customerName,
+                phone: data.customerPhone,
+                email: data.customerEmail || null
+              })
+              .select('id')
+              .single();
+
+            if (createdCust?.id) {
+              supabaseCustomerId = createdCust.id;
+            }
+            if (custErr) {
+              console.warn('Note on Supabase customer record insert:', custErr);
+            }
+          }
+        } catch (cErr) {
+          console.warn('Customer lookup/insert exception in Supabase:', cErr);
+        }
+
+        // Step B: Resolve valid service_id in Supabase
+        let supabaseServiceId: string | null = null;
+        try {
+          const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(data.serviceId);
+          if (isUuid) {
+            const { data: matchedService } = await supabase
+              .from('services')
+              .select('id')
+              .eq('id', data.serviceId)
+              .maybeSingle();
+            if (matchedService?.id) supabaseServiceId = matchedService.id;
+          }
+
+          if (!supabaseServiceId) {
+            const { data: salonServices } = await supabase
+              .from('services')
+              .select('id')
+              .eq('salon_id', data.salonId)
+              .limit(1);
+            if (salonServices && salonServices.length > 0) {
+              supabaseServiceId = salonServices[0].id;
+            } else {
+              const { data: anyService } = await supabase.from('services').select('id').limit(1);
+              if (anyService && anyService.length > 0) {
+                supabaseServiceId = anyService[0].id;
+              }
+            }
+          }
+        } catch (sErr) {
+          console.warn('Service resolution exception in Supabase:', sErr);
+        }
+
+        // Step C: Resolve staff_id if valid UUID
+        let supabaseStaffId: string | null = null;
+        if (staff?.id && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(staff.id)) {
+          try {
+            const { data: matchedProfile } = await supabase.from('profiles').select('id').eq('id', staff.id).maybeSingle();
+            if (matchedProfile?.id) supabaseStaffId = matchedProfile.id;
+          } catch {}
+        }
+
+        // Step D: Write Appointment to Supabase
+        if (supabaseCustomerId && supabaseServiceId) {
+          const notesObj = {
+            customer_name: data.customerName,
+            customer_phone: data.customerPhone,
+            customer_email: data.customerEmail,
+            service_name: service?.name || 'Custom Service',
+            staff_name: staff?.full_name || 'Selected Stylist',
+            payment_screenshot_url: data.paymentScreenshotUrl,
+            token_code: tokenCode,
+            token_number: tokenNumber,
+            full_service_price: fullServicePrice,
+            token_fee: tokenFee,
+            balance_due: balanceDue,
+            allergy_notes: data.allergyNotes,
+            home_address: data.homeAddress
+          };
+
+          const { data: insertedAppt, error: apptError } = await supabase
+            .from('appointments')
+            .insert({
+              salon_id: data.salonId,
+              customer_id: supabaseCustomerId,
+              service_id: supabaseServiceId,
+              staff_id: supabaseStaffId,
+              service_type: data.serviceType,
+              booking_channel: data.bookingChannel,
+              appointment_date: data.appointmentDate,
+              time_slot: data.timeSlot,
+              status: isPendingVerification ? 'pending' : 'confirmed',
+              amount: tokenFee,
+              payment_status: isPendingVerification ? 'pending' : 'completed',
+              payment_gateway: data.paymentGateway,
+              transaction_ref: data.paymentScreenshotUrl || null,
+              notes: JSON.stringify(notesObj)
+            })
+            .select()
+            .single();
+
+          if (apptError) {
+            console.error('CRITICAL: Supabase appointments insert error:', apptError);
+          } else if (insertedAppt) {
+            console.log('LIVE: Booking request successfully written to Supabase:', insertedAppt.id);
+            newAppointment.id = insertedAppt.id;
+            newToken.appointment_id = insertedAppt.id;
+            this.persistTenantDataLocally(data.salonId);
+          }
+        } else {
+          console.warn('Supabase booking skipped: missing customerId or serviceId foreign key', {
+            supabaseCustomerId,
+            supabaseServiceId
+          });
+        }
+      } catch (syncErr) {
+        console.error('Supabase booking exception:', syncErr);
+      }
     }
 
     this.notify();

@@ -273,6 +273,8 @@ export const CustomerMarketplace: React.FC<CustomerMarketplaceProps> = ({
   const currentPrice = selectedService
     ? (serviceLocation === 'home_service' ? selectedService.home_service_price : selectedService.in_salon_price)
     : 0;
+  const tokenFee = Math.round(currentPrice * 0.10);
+  const balanceDue = Math.max(0, currentPrice - tokenFee);
 
   // Aggregate styling profile from visits
   const latestStylistNotes = visitHistory.find(v => v.stylistNotes?.hairPreference || v.stylistNotes?.allergy || v.stylistNotes?.behavior)?.stylistNotes;
@@ -816,7 +818,7 @@ export const CustomerMarketplace: React.FC<CustomerMarketplaceProps> = ({
                 </div>
 
                 {/* Price Breakdown */}
-                <div className="p-3 bg-slate-950/80 rounded-2xl border border-slate-800 space-y-1.5 text-xs">
+                <div className="p-3.5 bg-slate-950/80 rounded-2xl border border-slate-800 space-y-2 text-xs">
                   <div className="flex justify-between text-slate-400">
                     <span>Service:</span>
                     <span className="text-white font-medium">{selectedService?.name}</span>
@@ -825,9 +827,19 @@ export const CustomerMarketplace: React.FC<CustomerMarketplaceProps> = ({
                     <span>Type:</span>
                     <span className="capitalize">{serviceLocation.replace('_', ' ')}</span>
                   </div>
-                  <div className="flex justify-between text-sm font-bold text-amber-400 pt-1.5 border-t border-slate-800">
-                    <span>Total Payable:</span>
-                    <span>₹{currentPrice}</span>
+                  <div className="flex justify-between text-slate-400 pt-1.5 border-t border-slate-800">
+                    <span>Full Service Cost:</span>
+                    <span className="text-slate-200 font-semibold font-mono">₹{currentPrice}</span>
+                  </div>
+                  <div className="flex justify-between text-sm font-bold text-amber-400 bg-amber-500/10 p-2.5 rounded-xl border border-amber-500/20">
+                    <span className="flex items-center gap-1">
+                      <Sparkles className="w-3.5 h-3.5" /> Token Booking Fee (10% Advance):
+                    </span>
+                    <span className="font-mono text-base">₹{tokenFee}</span>
+                  </div>
+                  <div className="flex justify-between text-[11px] text-slate-400 pt-0.5">
+                    <span>Remaining Balance (Pay at Salon):</span>
+                    <span className="text-slate-200 font-semibold font-mono">₹{balanceDue}</span>
                   </div>
                 </div>
 
@@ -835,9 +847,9 @@ export const CustomerMarketplace: React.FC<CustomerMarketplaceProps> = ({
                   <button
                     type="submit"
                     disabled={!selectedService || !bookingPhone.trim()}
-                    className="w-full py-3 bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 hover:to-amber-500 text-slate-950 font-bold rounded-2xl flex items-center justify-center gap-2 text-xs shadow-lg shadow-amber-500/20 transition-all disabled:opacity-50"
+                    className="w-full py-3 bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 hover:to-amber-500 text-slate-950 font-bold rounded-2xl flex items-center justify-center gap-2 text-xs shadow-lg shadow-amber-500/20 transition-all disabled:opacity-50 cursor-pointer"
                   >
-                    <span>Pay &amp; Get Live Token</span>
+                    <span>Pay ₹{tokenFee} Token Fee &amp; Get Live Token</span>
                     <ArrowRight className="w-4 h-4" />
                   </button>
                 ) : (
@@ -845,10 +857,10 @@ export const CustomerMarketplace: React.FC<CustomerMarketplaceProps> = ({
                     type="button"
                     onClick={() => setIsCustomerAuthModalOpen(true)}
                     disabled={!selectedService}
-                    className="w-full py-3 bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 hover:to-amber-500 text-slate-950 font-bold rounded-2xl flex items-center justify-center gap-2 text-xs shadow-lg shadow-amber-500/20 transition-all disabled:opacity-50"
+                    className="w-full py-3 bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 hover:to-amber-500 text-slate-950 font-bold rounded-2xl flex items-center justify-center gap-2 text-xs shadow-lg shadow-amber-500/20 transition-all disabled:opacity-50 cursor-pointer"
                   >
                     <Sparkles className="w-4 h-4" />
-                    <span>Verify Email &amp; Book Token</span>
+                    <span>Verify Email &amp; Pay ₹{tokenFee} Token Fee</span>
                     <ArrowRight className="w-4 h-4" />
                   </button>
                 )}
@@ -1048,7 +1060,10 @@ export const CustomerMarketplace: React.FC<CustomerMarketplaceProps> = ({
           salon={selectedSalon}
           service={selectedService}
           serviceType={serviceLocation}
-          amount={currentPrice}
+          amount={tokenFee}
+          fullServicePrice={currentPrice}
+          tokenFee={tokenFee}
+          balanceDue={balanceDue}
           stylistName={salonStaff.find(s => s.id === selectedStaffId)?.full_name || 'First Available Stylist'}
           customerName={customer?.name || 'Customer'}
           customerPhone={bookingPhone}

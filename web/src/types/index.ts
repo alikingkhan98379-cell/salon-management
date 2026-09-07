@@ -118,6 +118,7 @@ export interface Appointment {
   customer_id: string;
   customer_name?: string;
   customer_phone?: string;
+  customer_email?: string;
   staff_id?: string;
   staff_name?: string;
   service_id: string;
@@ -128,6 +129,9 @@ export interface Appointment {
   time_slot: string;
   status: AppointmentStatus;
   amount: number;
+  full_service_price?: number;
+  token_fee?: number;
+  balance_due?: number;
   payment_status: PaymentStatus;
   payment_gateway: PaymentGateway;
   payment_screenshot_url?: string;

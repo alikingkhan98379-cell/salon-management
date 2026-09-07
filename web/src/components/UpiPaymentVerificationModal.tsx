@@ -20,6 +20,9 @@ interface UpiPaymentVerificationModalProps {
   service: Service;
   serviceType: 'in_salon' | 'home_service';
   amount: number;
+  fullServicePrice?: number;
+  tokenFee?: number;
+  balanceDue?: number;
   stylistName: string;
   customerName: string;
   customerPhone: string;
@@ -35,12 +38,19 @@ export const UpiPaymentVerificationModal: React.FC<UpiPaymentVerificationModalPr
   service,
   serviceType,
   amount,
+  fullServicePrice,
+  tokenFee: tokenFeeProp,
+  balanceDue: balanceDueProp,
   stylistName,
   customerName,
   customerPhone,
   onSuccess,
   onClose
 }) => {
+  const tokenFee = tokenFeeProp !== undefined ? tokenFeeProp : amount;
+  const fullPrice = fullServicePrice !== undefined ? fullServicePrice : Math.round(tokenFee * 10);
+  const remainingBalance = balanceDueProp !== undefined ? balanceDueProp : Math.max(0, fullPrice - tokenFee);
+
   const upiId = salon.upi_id || 'westernboys@okhdfcbank';
   const [copied, setCopied] = useState(false);
   const [screenshotPreview, setScreenshotPreview] = useState<string | null>(null);
@@ -91,14 +101,18 @@ export const UpiPaymentVerificationModal: React.FC<UpiPaymentVerificationModalPr
       ctx.fillText('UPI Payment Successful', 24, 45);
       ctx.fillStyle = '#E2E8F0';
       ctx.font = '14px Inter, sans-serif';
-      ctx.fillText(`Paid to: ${salon.name}`, 24, 85);
-      ctx.fillText(`UPI ID: ${upiId}`, 24, 115);
-      ctx.fillText(`Amount: INR ${amount}.00`, 24, 145);
-      ctx.fillText(`Txn Ref: UPI/${Date.now().toString().slice(-10)}`, 24, 175);
-      ctx.fillText(`Customer: ${customerName} (${customerPhone})`, 24, 205);
+      ctx.fillText(`Paid to: ${salon.name}`, 24, 80);
+      ctx.fillText(`UPI ID: ${upiId}`, 24, 105);
+      ctx.fillText(`Full Service Price: INR ${fullPrice}.00`, 24, 130);
+      ctx.fillStyle = '#10B981';
+      ctx.fillText(`Token Fee (10% Advance): INR ${tokenFee}.00`, 24, 155);
+      ctx.fillStyle = '#CBD5E1';
+      ctx.fillText(`Balance Due at Salon: INR ${remainingBalance}.00`, 24, 180);
+      ctx.fillText(`Txn Ref: UPI/${Date.now().toString().slice(-10)}`, 24, 205);
+      ctx.fillText(`Customer: ${customerName} (${customerPhone})`, 24, 230);
       ctx.fillStyle = '#64748B';
       ctx.font = '11px monospace';
-      ctx.fillText(new Date().toLocaleString(), 24, 255);
+      ctx.fillText(new Date().toLocaleString(), 24, 265);
     }
     
     canvas.toBlob((blob) => {
@@ -147,7 +161,7 @@ export const UpiPaymentVerificationModal: React.FC<UpiPaymentVerificationModalPr
     }
   };
 
-  const upiDeepLink = `upi://pay?pa=${encodeURIComponent(upiId)}&pn=${encodeURIComponent(salon.name)}&am=${amount}&cu=INR`;
+  const upiDeepLink = `upi://pay?pa=${encodeURIComponent(upiId)}&pn=${encodeURIComponent(salon.name)}&am=${tokenFee}&cu=INR`;
 
   return (
     <div className="fixed inset-0 z-50 bg-black/85 backdrop-blur-md flex items-center justify-center p-4 overflow-y-auto animate-fadeIn font-sans">
@@ -166,17 +180,17 @@ export const UpiPaymentVerificationModal: React.FC<UpiPaymentVerificationModalPr
         <div>
           <div className="flex items-center gap-2 mb-1">
             <span className="px-2 py-0.5 rounded-full bg-amber-500/10 text-amber-400 border border-amber-500/20 text-[10px] font-bold uppercase tracking-wider flex items-center gap-1">
-              <QrCode className="w-3 h-3" /> Step 2: Direct UPI Payment
+              <QrCode className="w-3 h-3" /> Step 2: 10% Advance Token Confirmation Fee
             </span>
           </div>
           <h2 className="text-xl font-bold font-serif text-white">{salon.name}</h2>
           <p className="text-xs text-slate-400">
-            Pay directly to the salon owner and upload proof for instant queue token verification.
+            Pay strictly the 10% booking fee now to confirm your live queue token. The remaining ₹{remainingBalance} is payable at the salon in person.
           </p>
         </div>
 
         {/* Amount & Service Card */}
-        <div className="bg-slate-950/80 border border-slate-800 rounded-2xl p-4 space-y-2 text-xs">
+        <div className="bg-slate-950/80 border border-slate-800 rounded-2xl p-4 space-y-2.5 text-xs">
           <div className="flex justify-between items-center text-slate-300">
             <span>Service:</span>
             <strong className="text-white">{service.name} ({serviceType.replace('_', ' ')})</strong>
@@ -187,9 +201,24 @@ export const UpiPaymentVerificationModal: React.FC<UpiPaymentVerificationModalPr
               <Scissors className="w-3 h-3" /> {stylistName}
             </strong>
           </div>
-          <div className="flex justify-between items-center pt-2 border-t border-slate-800">
-            <span className="text-xs font-bold text-slate-400 uppercase">Amount Due:</span>
-            <span className="text-2xl font-black text-amber-400 font-mono">₹{amount}</span>
+
+          <div className="pt-2 border-t border-slate-800 space-y-1.5">
+            <div className="flex justify-between items-center text-slate-400">
+              <span>Full Service Cost:</span>
+              <span className="text-slate-300 font-semibold font-mono">₹{fullPrice}</span>
+            </div>
+
+            <div className="flex justify-between items-center text-amber-400 bg-amber-500/10 p-2.5 rounded-xl border border-amber-500/20">
+              <span className="font-bold flex items-center gap-1">
+                <Sparkles className="w-3.5 h-3.5" /> Token Booking Fee (10% Due Now):
+              </span>
+              <span className="text-xl font-black font-mono">₹{tokenFee}</span>
+            </div>
+
+            <div className="flex justify-between items-center text-slate-400 text-[11px] pt-1">
+              <span>Remaining Balance (Pay at Salon):</span>
+              <span className="text-slate-200 font-semibold font-mono">₹{remainingBalance}</span>
+            </div>
           </div>
         </div>
 

@@ -192,6 +192,9 @@ CREATE TABLE IF NOT EXISTS appointments (
     time_slot VARCHAR(20) NOT NULL,
     status appointment_status NOT NULL DEFAULT 'pending',
     amount NUMERIC(10, 2) NOT NULL,
+    full_service_price NUMERIC(10, 2),
+    token_fee NUMERIC(10, 2),
+    balance_due NUMERIC(10, 2),
     payment_status payment_status NOT NULL DEFAULT 'pending',
     payment_gateway payment_gateway NOT NULL DEFAULT 'upi',
     payment_screenshot_url TEXT,
@@ -202,9 +205,25 @@ CREATE TABLE IF NOT EXISTS appointments (
     notes TEXT,
     home_service_address TEXT,
     token_code VARCHAR(50),
+    token_number INT,
     created_at TIMESTAMPTZ DEFAULT NOW(),
     updated_at TIMESTAMPTZ DEFAULT NOW()
 );
+
+-- Upgrade existing appointments table columns and constraints idempotently
+ALTER TABLE appointments ADD COLUMN IF NOT EXISTS customer_name VARCHAR(255);
+ALTER TABLE appointments ADD COLUMN IF NOT EXISTS customer_phone VARCHAR(20);
+ALTER TABLE appointments ADD COLUMN IF NOT EXISTS customer_email VARCHAR(255);
+ALTER TABLE appointments ADD COLUMN IF NOT EXISTS staff_name VARCHAR(255);
+ALTER TABLE appointments ADD COLUMN IF NOT EXISTS service_name VARCHAR(255);
+ALTER TABLE appointments ADD COLUMN IF NOT EXISTS payment_screenshot_url TEXT;
+ALTER TABLE appointments ADD COLUMN IF NOT EXISTS token_code VARCHAR(50);
+ALTER TABLE appointments ADD COLUMN IF NOT EXISTS token_number INT;
+ALTER TABLE appointments ADD COLUMN IF NOT EXISTS full_service_price NUMERIC(10, 2);
+ALTER TABLE appointments ADD COLUMN IF NOT EXISTS token_fee NUMERIC(10, 2);
+ALTER TABLE appointments ADD COLUMN IF NOT EXISTS balance_due NUMERIC(10, 2);
+ALTER TABLE appointments ALTER COLUMN customer_id DROP NOT NULL;
+ALTER TABLE appointments ALTER COLUMN service_id DROP NOT NULL;
 
 CREATE INDEX IF NOT EXISTS idx_appointments_salon_date ON appointments(salon_id, appointment_date);
 CREATE INDEX IF NOT EXISTS idx_appointments_staff ON appointments(staff_id);
